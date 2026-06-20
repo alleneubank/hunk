@@ -93,6 +93,7 @@ export interface CommonOptions {
   menuBar?: boolean;
   agentNotes?: boolean;
   copyDecorations?: boolean;
+  promptSaveViewPreferences?: boolean;
   transparentBackground?: boolean;
   colorMoved?: boolean;
 }
@@ -369,4 +370,5 @@ export interface AppBootstrap {
   initialShowMenuBar?: boolean;
   initialShowAgentNotes?: boolean;
   initialCopyDecorations?: boolean;
+  viewPreferencesConfigPath?: string;
 }
