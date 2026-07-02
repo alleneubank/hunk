@@ -1238,7 +1238,7 @@ export function App({
         <ConfirmDialog
           actions={[
             { keyLabel: "enter/s", label: "save", run: saveViewPreferencesAndQuit },
-            { keyLabel: "d", label: "discard", run: discardViewPreferencesAndQuit },
+            { keyLabel: "q", label: "discard", run: discardViewPreferencesAndQuit },
             { keyLabel: "n", label: "never ask", run: neverAskToSaveViewPreferencesAndQuit },
             { keyLabel: "esc", label: "cancel", run: closeSaveConfigPrompt },
           ]}
