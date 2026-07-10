@@ -123,6 +123,10 @@ export const AUXILIARY_AGENT_OPTIONS = {
     flag: "--agent-context <path>",
     description: "JSON sidecar with agent rationale",
   },
+  noAgentContext: {
+    flag: "--no-agent-context",
+    description: "ignore any agent-context sidecar (disable auto-discovery)",
+  },
   excludeUntracked: {
     flag: "--exclude-untracked",
     description: "exclude untracked files from working tree reviews",

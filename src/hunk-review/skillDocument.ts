@@ -172,6 +172,12 @@ const NEW_FILES_SECTION = [
   ...bashFence(["hunk session reload --repo . -- diff --exclude-untracked"]),
 ];
 
+const AGENT_CONTEXT_SECTION = [
+  "## Agent context sidecars",
+  "",
+  "At the end of a meaningful changeset, write or refresh `.hunk/agent-context.json` in the repo root so Hunk can auto-load it with zero flags. Use range-based annotations with `oldRange` / `newRange`; the file order in the sidecar drives sidebar and review order.",
+];
+
 const GUIDING_SECTION = [
   "## Guiding a review",
   "",
@@ -219,6 +225,7 @@ export function renderHunkReviewSkill() {
     COMMENTS_SECTION,
     STML_SECTION,
     NEW_FILES_SECTION,
+    AGENT_CONTEXT_SECTION,
     GUIDING_SECTION,
     commonErrorsSection(),
   ];

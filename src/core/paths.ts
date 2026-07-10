@@ -1,6 +1,11 @@
 import fs from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 
+/** Name of hunk's repo-local metadata directory. */
+export const HUNK_DIR_NAME = ".hunk";
+/** Conventional agent-context sidecar filename inside `.hunk/`. */
+export const AGENT_CONTEXT_FILENAME = "agent-context.json";
+
 const HUNK_REVIEW_SKILL_RELATIVE_PATH = join("skills", "hunk-review", "SKILL.md");
 
 /**
@@ -45,6 +50,12 @@ export function resolveCanonicalPath(path: string) {
       // Keep walking until we find an existing ancestor or hit the filesystem root.
     }
   }
+}
+
+/** Return whether a repo-root-relative path lives inside hunk's `.hunk/` metadata dir. */
+export function isHunkMetadataRelativePath(relativePath: string): boolean {
+  const normalized = relativePath.replace(/\\/g, "/");
+  return normalized === HUNK_DIR_NAME || normalized.startsWith(`${HUNK_DIR_NAME}/`);
 }
 
 /** Resolve the base config directory Hunk should use for user-scoped files. */

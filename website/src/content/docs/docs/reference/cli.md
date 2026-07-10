@@ -21,6 +21,7 @@ This reference is generated from the command metadata used by Hunk itself. Run `
 | `--mode <mode>`             | layout mode: auto, split, stack                                 |
 | `--theme <theme>`           | named theme override                                            |
 | `--agent-context <path>`    | JSON sidecar with agent rationale                               |
+| `--no-agent-context`        | ignore any agent-context sidecar (disable auto-discovery)       |
 | `--pager`                   | use pager-style chrome                                          |
 | `--experimental`            | enable experimental features (currently STML agent-note markup) |
 | `--line-numbers`            | show line numbers                                               |
