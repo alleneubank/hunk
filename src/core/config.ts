@@ -16,6 +16,7 @@ import { LEGACY_CUSTOM_SYNTAX_COLOR_KEYS, resolveSyntaxScopeOverrides } from "./
 import { AGENT_CONTEXT_FILENAME, HUNK_DIR_NAME, resolveGlobalConfigPath } from "./paths";
 import { LEGACY_CUSTOM_SYNTAX_NOTICES, type StartupNotice } from "./startupNotice";
 import { DEFAULT_TAB_WIDTH, validateTabWidth } from "./tabWidth";
+import { isRecord } from "./typeGuards";
 import { detectVcs, findVcsRepoRootCandidate, getDefaultVcsAdapter } from "./vcs";
 import type {
   CliInput,
@@ -90,10 +91,6 @@ export interface HunkConfigResolution {
   globalConfigPath?: string;
   repoConfigPath?: string;
   viewPreferencesConfigPath?: string;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /** Serialize one primitive TOML preference value. */
