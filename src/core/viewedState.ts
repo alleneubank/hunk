@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import type { DiffFile } from "./types";
+import { isRecord } from "./typeGuards";
 
 const VIEWED_STATE_VERSION = 1;
 const VIEWED_STATE_RETENTION_MS = 30 * 24 * 60 * 60 * 1_000;
@@ -20,11 +21,6 @@ export interface ViewedState {
 /** Create a fresh empty state so tolerant reads never share mutable file records. */
 function emptyViewedState(): ViewedState {
   return { version: VIEWED_STATE_VERSION, files: {} };
-}
-
-/** Return whether an unknown value is a plain record. */
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /** Validate the complete persisted schema before allowing any entry to affect a review. */
