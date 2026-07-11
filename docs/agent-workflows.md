@@ -50,6 +50,7 @@ hunk session review --repo . --json
 - `list` shows the active Hunk windows
 - `get --repo .` confirms which live session matches the current repo
 - `review --json` returns the loaded file and hunk structure without dumping the full raw patch
+- JSON session snapshots include `viewedFileCount` and `viewedFilePaths` for review progress
 
 Only add `--include-patch` when an agent truly needs raw unified diff text:
 
@@ -78,6 +79,18 @@ Notes:
 - always include `--` before the nested Hunk command in `reload`
 - `--hunk` is 1-based
 - `--next-comment` and `--prev-comment` are handy when an agent is walking the user through existing notes
+
+### Track viewed files
+
+Mark a file viewed after covering it, or clear the mark when it needs another pass:
+
+```bash
+hunk session viewed --repo . --file src/App.tsx
+hunk session viewed --repo . --file src/App.tsx --unset
+```
+
+The command updates the live window's sidebar and `viewed n/m` progress. Agents can read
+`viewedFileCount` and `viewedFilePaths` from JSON session snapshots to choose the next file.
 
 ### Add comments
 

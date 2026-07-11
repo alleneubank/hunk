@@ -65,6 +65,12 @@ export const sessionDaemonRequestSchema = z.discriminatedUnion("action", [
     commentDirection: z.enum(["next", "prev"]).optional(),
   }),
   z.strictObject({
+    action: z.literal("viewed-set"),
+    selector: selectorSchema,
+    filePath: z.string(),
+    viewed: z.boolean(),
+  }),
+  z.strictObject({
     action: z.literal("reload"),
     selector: selectorSchema,
     nextInput: nextInputSchema,

@@ -54,9 +54,10 @@ const WORKFLOW = [
   "4. hunk session review --repo . --include-patch --json  # opt into raw diff text only when needed",
   "5. hunk session context --repo .                        # check current focus when needed",
   "6. hunk session navigate ...                            # move to the right place",
-  "7. hunk session reload -- <command>                     # swap contents if needed",
-  "8. hunk session comment add ...                         # leave one review note",
-  "9. hunk session comment apply ...                       # apply many agent notes in one stdin batch",
+  "7. hunk session viewed --repo . --file <path>           # mark a file covered",
+  "8. hunk session reload -- <command>                     # swap contents if needed",
+  "9. hunk session comment add ...                         # leave one review note",
+  "10. hunk session comment apply ...                      # apply many agent notes in one stdin batch",
   "```",
 ];
 
@@ -104,6 +105,21 @@ const NAVIGATE_SECTION = [
   "- `--hunk <n>` is 1-based",
   "- `--new-line` / `--old-line` are 1-based line numbers on that diff side",
   "- Use either `--next-comment` or `--prev-comment`, not both",
+];
+
+const VIEWED_SECTION = [
+  "### Viewed files",
+  "",
+  "After covering a file, mark it viewed so the user and other agents can track review progress:",
+  "",
+  ...bashFence(synopsisLines(commands["viewed-set"])),
+  "",
+  "Examples:",
+  "",
+  ...bashFence(commands["viewed-set"].examples ?? []),
+  "",
+  "Use `--unset` when the file needs another pass. JSON session snapshots expose",
+  "`viewedFileCount` and `viewedFilePaths` for choosing the next unviewed file.",
 ];
 
 const RELOAD_SECTION = [
@@ -221,6 +237,7 @@ export function renderHunkReviewSkill() {
     ["## Commands"],
     INSPECT_SECTION,
     NAVIGATE_SECTION,
+    VIEWED_SECTION,
     RELOAD_SECTION,
     COMMENTS_SECTION,
     STML_SECTION,

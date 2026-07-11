@@ -8,6 +8,7 @@ import type {
   SessionReloadCommandInput,
   SessionReviewCommandInput,
   SessionSelectorInput,
+  SessionViewedSetCommandInput,
 } from "../core/types";
 import type {
   AppliedCommentBatchResult,
@@ -21,6 +22,7 @@ import type {
   SessionLiveCommentSummary,
   SessionReview,
   SessionReviewNoteSummary,
+  SetViewedResult,
 } from "./types";
 
 export const HUNK_SESSION_API_PATH = "/session-api";
@@ -32,7 +34,7 @@ export const HUNK_SESSION_API_VERSION = 1;
  * builds can refresh an older daemon even when it still exposes the same API endpoints. Bump this
  * when daemon-forwarded payloads change, even if the supported action names stay stable.
  */
-export const HUNK_SESSION_DAEMON_VERSION = 6;
+export const HUNK_SESSION_DAEMON_VERSION = 7;
 
 export type SessionDaemonAction =
   | "list"
@@ -40,6 +42,7 @@ export type SessionDaemonAction =
   | "context"
   | "review"
   | "navigate"
+  | "viewed-set"
   | "reload"
   | "comment-add"
   | "comment-apply"
@@ -79,6 +82,12 @@ export type SessionDaemonRequest =
       side?: "old" | "new";
       line?: number;
       commentDirection?: "next" | "prev";
+    }
+  | {
+      action: "viewed-set";
+      selector: SessionViewedSetCommandInput["selector"];
+      filePath: string;
+      viewed: boolean;
     }
   | {
       action: "reload";
@@ -128,6 +137,7 @@ export type SessionDaemonResponse =
   | { context: SelectedSessionContext }
   | { review: SessionReview }
   | { result: NavigatedSelectionResult }
+  | { result: SetViewedResult }
   | { result: ReloadedSessionResult }
   | { result: AppliedCommentResult }
   | { result: AppliedCommentBatchResult }

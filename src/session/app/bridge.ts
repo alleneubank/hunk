@@ -7,6 +7,7 @@ import type {
   NavigatedSelectionResult,
   ReloadedSessionResult,
   RemovedCommentResult,
+  SetViewedResult,
 } from "../types";
 
 export interface HunkSessionBridgeHandlers {
@@ -27,6 +28,9 @@ export interface HunkSessionBridgeHandlers {
   navigateToLocation: (
     input: Extract<HunkSessionServerMessage, { command: "navigate_to_hunk" }>["input"],
   ) => NavigatedSelectionResult;
+  setFileViewed?: (
+    input: Extract<HunkSessionServerMessage, { command: "set_viewed" }>["input"],
+  ) => SetViewedResult;
   openAgentNotes: () => void;
   reloadSession: (
     nextInput: Extract<
@@ -69,6 +73,11 @@ export function createHunkSessionBridge(handlers: HunkSessionBridgeHandlers) {
         }
         case "navigate_to_hunk":
           return handlers.navigateToLocation(message.input);
+        case "set_viewed":
+          if (!handlers.setFileViewed) {
+            throw new Error("This Hunk session does not support viewed-state updates.");
+          }
+          return handlers.setFileViewed(message.input);
         case "reload_session":
           return handlers.reloadSession(message.input.nextInput, {
             resetApp: false,

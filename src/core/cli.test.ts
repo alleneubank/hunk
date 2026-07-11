@@ -481,6 +481,60 @@ describe("parseCli", () => {
     });
   });
 
+  test("parses session viewed as viewed by default", async () => {
+    const parsed = await parseCli([
+      "bun",
+      "hunk",
+      "session",
+      "viewed",
+      "session-1",
+      "--file",
+      "README.md",
+      "--json",
+    ]);
+
+    expect(parsed).toEqual({
+      kind: "session",
+      action: "viewed-set",
+      selector: { sessionId: "session-1" },
+      filePath: "README.md",
+      viewed: true,
+      output: "json",
+    });
+  });
+
+  test("parses session viewed --unset with a repo selector", async () => {
+    const repoRoot = realpathSync.native(createTempDir("hunk-cli-viewed-repo-"));
+    mkdirSync(join(repoRoot, ".git"));
+
+    const parsed = await parseCli([
+      "bun",
+      "hunk",
+      "session",
+      "viewed",
+      "--repo",
+      repoRoot,
+      "--file",
+      "src/example.ts",
+      "--unset",
+    ]);
+
+    expect(parsed).toEqual({
+      kind: "session",
+      action: "viewed-set",
+      selector: { repoRoot },
+      filePath: "src/example.ts",
+      viewed: false,
+      output: "text",
+    });
+  });
+
+  test("rejects session viewed without --file", async () => {
+    await expect(parseCli(["bun", "hunk", "session", "viewed", "session-1"])).rejects.toThrow(
+      "--file",
+    );
+  });
+
   test("parses session reload with nested show syntax", async () => {
     const parsed = await parseCli([
       "bun",

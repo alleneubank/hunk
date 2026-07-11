@@ -192,6 +192,14 @@ export interface ExtensionDiffFile {
   isUntracked?: boolean;
   isBinary?: boolean;
   isTooLarge?: boolean;
+  /**
+   * Whether the reviewer has marked this file viewed.
+   *
+   * Review progress, not diff content: it is the reviewer's own state, tracked
+   * per repo and reset when a file's patch changes. Absent means not viewed, so
+   * surfaces that ignore review progress need no change.
+   */
+  viewed?: boolean;
 }
 
 /** One reviewed changeset, as extensions see it. */

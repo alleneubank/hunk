@@ -9,6 +9,8 @@ export interface FileListEntry {
   kind: "file";
   id: string;
   name: string;
+  /** Whether this file is viewed; builder-produced entries always include the flag. */
+  viewed?: boolean;
   agentCommentsText: string | null;
   additionsText: string | null;
   deletionsText: string | null;
@@ -28,6 +30,8 @@ export interface FileListEntry {
 export interface SidebarFileSource {
   id: string;
   path: string;
+  /** Whether the reviewer has marked this file viewed; absent means not viewed. */
+  viewed?: boolean;
   previousPath?: string;
   stats: { additions: number; deletions: number };
   statsTruncated?: boolean;
@@ -67,12 +71,19 @@ function formatSidebarStat(prefix: "+" | "-", value: number, truncated = false) 
 }
 
 /** Build the visible stats badges for one sidebar row.
- * Keep the agent-note badge first so it reads as review context before line churn.
+ * Keep review progress before review context and line churn.
  */
 export function sidebarEntryStats(
-  entry: Pick<FileListEntry, "agentCommentsText" | "additionsText" | "deletionsText">,
+  entry: Pick<FileListEntry, "viewed" | "agentCommentsText" | "additionsText" | "deletionsText">,
 ) {
-  const stats: Array<{ kind: "agent-comment" | "addition" | "deletion"; text: string }> = [];
+  const stats: Array<{
+    kind: "viewed" | "agent-comment" | "addition" | "deletion";
+    text: string;
+  }> = [];
+
+  if (entry.viewed) {
+    stats.push({ kind: "viewed", text: "✓" });
+  }
 
   if (entry.agentCommentsText) {
     stats.push({ kind: "agent-comment", text: entry.agentCommentsText });
@@ -91,7 +102,7 @@ export function sidebarEntryStats(
 
 /** Measure the rendered sidebar stats width, including the space between badges. */
 export function sidebarEntryStatsWidth(
-  entry: Pick<FileListEntry, "agentCommentsText" | "additionsText" | "deletionsText">,
+  entry: Pick<FileListEntry, "viewed" | "agentCommentsText" | "additionsText" | "deletionsText">,
 ) {
   return sidebarEntryStats(entry).reduce(
     (width, stat, index) => width + stat.text.length + (index > 0 ? 1 : 0),
@@ -165,6 +176,7 @@ export function buildSidebarEntries(files: readonly SidebarFileSource[]): Sideba
       kind: "file",
       id: file.id,
       name: sidebarFileName(file),
+      viewed: file.viewed ?? false,
       agentCommentsText: agentCommentCount > 0 ? `*${agentCommentCount}` : null,
       additionsText: formatSidebarStat("+", file.stats.additions, file.statsTruncated),
       deletionsText: formatSidebarStat("-", file.stats.deletions),

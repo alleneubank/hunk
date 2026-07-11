@@ -7,10 +7,16 @@ Hunk is a review-first terminal diff viewer for agent-authored changesets, built
 [![MIT License](https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge)](LICENSE)
 
 - multi-file review stream with sidebar navigation
+- per-file viewed progress with keyboard navigation and repo-local persistence
 - inline AI and agent annotations beside the code
 - split, stack, and responsive auto layouts
 - watch mode for auto-reloading file and Git-backed reviews
 - keyboard, mouse, pager, and Git difftool support
+
+Press `v` to toggle the selected file viewed and `>` / `<` to jump between unviewed files.
+Viewed files show a dimmed name and `✓` in the sidebar while the menu bar reports
+`viewed n/m`. Repo-backed reviews persist this progress in `.hunk/review-state.json` and
+automatically unview a file when its diff changes.
 
 <table>
  <tr>

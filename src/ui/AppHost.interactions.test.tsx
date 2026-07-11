@@ -152,6 +152,28 @@ function createBootstrap(initialMode: LayoutMode = "split", pager = false): AppB
   });
 }
 
+/** Build three files so viewed navigation can prove skipping, wrapping, and all-viewed no-ops. */
+function createViewedNavigationBootstrap(): AppBootstrap {
+  return createTestVcsAppBootstrap({
+    changesetId: "changeset:viewed-navigation",
+    files: [
+      createTestDiffFile(
+        "alpha",
+        "alpha.ts",
+        "export const alpha = 1;\n",
+        "export const alpha = 2;\n",
+      ),
+      createTestDiffFile("beta", "beta.ts", "export const beta = 1;\n", "export const beta = 2;\n"),
+      createTestDiffFile(
+        "gamma",
+        "gamma.ts",
+        "export const gamma = 1;\n",
+        "export const gamma = 2;\n",
+      ),
+    ],
+  });
+}
+
 function createSingleFileBootstrap(): AppBootstrap {
   return createTestVcsAppBootstrap({
     changesetId: "changeset:app-single-file",
@@ -430,6 +452,14 @@ async function flush(setup: Awaited<ReturnType<typeof testRender>>) {
   });
 }
 
+/** Send one app shortcut and let React publish state before the next dependent keypress. */
+async function pressAppShortcut(setup: Awaited<ReturnType<typeof testRender>>, shortcut: string) {
+  await act(async () => {
+    await setup.mockInput.typeText(shortcut);
+  });
+  await flush(setup);
+}
+
 /** Let wrap-toggle renders and follow-up layout retries settle before asserting on the frame. */
 async function settleWrapToggle(setup: Awaited<ReturnType<typeof testRender>>) {
   await flush(setup);
@@ -492,6 +522,21 @@ function hasLineWithBackground(
       )
     );
   });
+}
+
+/** Return whether a rendered text span uses the expected foreground color. */
+function hasTextWithForeground(
+  frame: ReturnType<Awaited<ReturnType<typeof testRender>>["captureSpans"]>,
+  text: string,
+  foregroundColor: string,
+) {
+  return frame.lines.some((line) =>
+    line.spans.some(
+      (span) =>
+        span.text.includes(text) &&
+        capturedTestColorToHex(span.fg)?.toLowerCase() === foregroundColor.toLowerCase(),
+    ),
+  );
 }
 
 /** Open the theme selector modal through the View menu. */
@@ -744,6 +789,88 @@ describe("App interactions", () => {
     try {
       await flush(setup);
       expect(setup.captureCharFrame()).toContain(LEGACY_CUSTOM_SYNTAX_NOTICE.message);
+    } finally {
+      await act(async () => {
+        setup.renderer.destroy();
+      });
+    }
+  });
+
+  test("v toggles viewed sidebar styling and all-file progress", async () => {
+    const bootstrap = createBootstrap();
+    const theme = resolveTheme(bootstrap.initialTheme, null);
+    const setup = await testRender(<AppHost bootstrap={bootstrap} />, {
+      width: 220,
+      height: 24,
+    });
+
+    try {
+      await flush(setup);
+      let frame = setup.captureCharFrame();
+      expect(firstNonEmptyLine(frame)).toContain("viewed 0/2");
+      expect(frame.match(/viewed 0\/2/g)).toHaveLength(1);
+
+      await act(async () => {
+        await setup.mockInput.typeText("v");
+      });
+      frame = await waitForFrame(setup, (nextFrame) => nextFrame.includes("viewed 1/2"));
+
+      expect(firstNonEmptyLine(frame)).toContain("viewed 1/2");
+      expect(frame.match(/viewed 1\/2/g)).toHaveLength(1);
+      expect(frame).toContain("\u2713");
+      expect(hasTextWithForeground(setup.captureSpans(), "alpha.ts", theme.muted)).toBe(true);
+
+      await act(async () => {
+        await setup.mockInput.typeText("v");
+      });
+      frame = await waitForFrame(setup, (nextFrame) => nextFrame.includes("viewed 0/2"));
+
+      expect(firstNonEmptyLine(frame)).toContain("viewed 0/2");
+      expect(frame.match(/viewed 0\/2/g)).toHaveLength(1);
+      expect(frame).not.toContain("\u2713");
+    } finally {
+      await act(async () => {
+        setup.renderer.destroy();
+      });
+    }
+  });
+
+  test("> skips viewed files, wraps, and leaves an all-viewed selection unchanged", async () => {
+    const bootstrap = createViewedNavigationBootstrap();
+    const { getLatestSnapshot, hostClient } = createMockHostClient();
+    const setup = await testRender(<AppHost bootstrap={bootstrap} hostClient={hostClient} />, {
+      width: 220,
+      height: 24,
+    });
+
+    try {
+      await flush(setup);
+
+      // Plain u is half-page scrolling; it must never move the selection again.
+      await pressAppShortcut(setup, "u");
+      expect(getLatestSnapshot()?.selectedFileId ?? "alpha").toBe("alpha");
+
+      await pressAppShortcut(setup, "v");
+      await pressAppShortcut(setup, ".");
+      await pressAppShortcut(setup, "v");
+      await pressAppShortcut(setup, ",");
+      await pressAppShortcut(setup, ">");
+      let snapshot = await waitForSnapshot(
+        setup,
+        getLatestSnapshot,
+        (nextSnapshot) => nextSnapshot.selectedFileId === "gamma",
+      );
+      expect(snapshot?.selectedFileId).toBe("gamma");
+
+      await pressAppShortcut(setup, "v");
+      await pressAppShortcut(setup, ">");
+      expect(setup.captureCharFrame()).toContain("viewed 3/3");
+      snapshot = await waitForSnapshot(
+        setup,
+        getLatestSnapshot,
+        (nextSnapshot) => nextSnapshot.selectedFileId === "gamma",
+      );
+      expect(snapshot?.selectedFileId).toBe("gamma");
     } finally {
       await act(async () => {
         setup.renderer.destroy();

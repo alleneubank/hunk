@@ -289,6 +289,30 @@ hunk session navigate --repo . --next-comment
 hunk session navigate --repo . --prev-comment
 ```
 
+### `hunk session viewed`
+
+mark one file viewed or unviewed in a live Hunk session
+
+```bash
+hunk session viewed (<session-id> | --repo <path>) --file <path> [--unset] [--json]
+```
+
+| Option          | Description                                               |
+| --------------- | --------------------------------------------------------- |
+| `--file <path>` | diff file path as shown by Hunk                           |
+| `--repo <path>` | target the live session whose repo root matches this path |
+| `--unset`       | clear viewed state instead of setting it                  |
+| `--json`        | emit structured JSON                                      |
+
+**Positionals:** `[sessionId]`.
+
+**Examples:**
+
+```bash
+hunk session viewed --repo . --file src/App.tsx
+hunk session viewed --repo . --file src/App.tsx --unset
+```
+
 ### `hunk session reload`
 
 replace the contents of one live Hunk session

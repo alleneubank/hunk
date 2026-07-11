@@ -154,6 +154,8 @@ describe("session registration", () => {
       liveComments: [],
       reviewNoteCount: 0,
       reviewNotes: [],
+      viewedFileCount: 0,
+      viewedFilePaths: [],
     });
   });
 });

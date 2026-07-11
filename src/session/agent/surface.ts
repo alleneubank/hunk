@@ -272,6 +272,22 @@ export const SESSION_AGENT_COMMANDS = {
       "hunk session navigate --repo . --prev-comment",
     ],
   },
+  "viewed-set": {
+    name: "session viewed",
+    summary: "mark one file viewed or unviewed in a live Hunk session",
+    positionals: [{ token: "[sessionId]" }],
+    options: [
+      diffFileOption,
+      repoOption,
+      { flag: "--unset", description: "clear viewed state instead of setting it" },
+      jsonOption,
+    ],
+    synopsis: [`hunk session viewed ${SESSION_SELECTOR_SYNOPSIS} --file <path> [--unset] [--json]`],
+    examples: [
+      "hunk session viewed --repo . --file src/App.tsx",
+      "hunk session viewed --repo . --file src/App.tsx --unset",
+    ],
+  },
   reload: {
     name: "session reload",
     summary: "replace the contents of one live Hunk session",

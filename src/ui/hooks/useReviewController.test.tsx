@@ -148,6 +148,212 @@ async function renderReviewController(
 }
 
 describe("useReviewController", () => {
+  test("sets viewed files idempotently and toggles the selected file", async () => {
+    const { controllerRef, setup } = await renderReviewController([
+      createDiffFile("alpha", "alpha.ts", "export const alpha = 1;\n", "export const alpha = 2;\n"),
+      createDiffFile("beta", "beta.ts", "export const beta = 1;\n", "export const beta = 2;\n"),
+    ]);
+
+    try {
+      await flush(setup);
+
+      await act(async () => {
+        expectValue(controllerRef.current).setFileViewed("alpha", true);
+        expectValue(controllerRef.current).setFileViewed("alpha", true);
+      });
+      await flush(setup);
+
+      let controller = expectValue(controllerRef.current);
+      expect(controller.viewedFileIds).toEqual(new Set(["alpha"]));
+      expect(controller.viewedFileCount).toBe(1);
+      expect(controller.totalFileCount).toBe(2);
+
+      await act(async () => {
+        controller.selectFile("beta");
+      });
+      await flush(setup);
+      await act(async () => {
+        expectValue(controllerRef.current).toggleViewedForSelectedFile();
+      });
+      await flush(setup);
+
+      controller = expectValue(controllerRef.current);
+      expect(controller.viewedFileIds).toEqual(new Set(["alpha", "beta"]));
+
+      await act(async () => {
+        controller.toggleViewedForSelectedFile();
+        controller.setFileViewed("alpha", false);
+        controller.setFileViewed("alpha", false);
+      });
+      await flush(setup);
+
+      controller = expectValue(controllerRef.current);
+      expect(controller.viewedFileIds).toEqual(new Set());
+      expect(controller.viewedFileCount).toBe(0);
+    } finally {
+      await act(async () => {
+        setup.renderer.destroy();
+      });
+    }
+  });
+
+  test("toggleViewedForSelectedFile is a no-op without a selected file", async () => {
+    const { controllerRef, setup } = await renderReviewController([]);
+
+    try {
+      await flush(setup);
+
+      await act(async () => {
+        expectValue(controllerRef.current).toggleViewedForSelectedFile();
+      });
+      await flush(setup);
+
+      const controller = expectValue(controllerRef.current);
+      expect(controller.viewedFileIds).toEqual(new Set());
+      expect(controller.viewedFileCount).toBe(0);
+      expect(controller.totalFileCount).toBe(0);
+    } finally {
+      await act(async () => {
+        setup.renderer.destroy();
+      });
+    }
+  });
+
+  test("replaces viewed ids and counts all live files independently of the filter", async () => {
+    const { controllerRef, setup } = await renderReviewController([
+      createDiffFile("alpha", "alpha.ts", "export const alpha = 1;\n", "export const alpha = 2;\n"),
+      createDiffFile("beta", "beta.ts", "export const beta = 1;\n", "export const beta = 2;\n"),
+    ]);
+
+    try {
+      await flush(setup);
+
+      await act(async () => {
+        expectValue(controllerRef.current).replaceViewedFileIds(new Set(["alpha", "stale"]));
+        expectValue(controllerRef.current).setFilter("beta");
+      });
+      await flush(setup);
+
+      let controller = expectValue(controllerRef.current);
+      expect(controller.visibleFiles.map((file) => file.id)).toEqual(["beta"]);
+      expect(controller.viewedFileIds).toEqual(new Set(["alpha", "stale"]));
+      expect(controller.viewedFileCount).toBe(1);
+      expect(controller.totalFileCount).toBe(2);
+
+      await act(async () => {
+        controller.replaceViewedFileIds(new Set(["beta"]));
+      });
+      await flush(setup);
+
+      controller = expectValue(controllerRef.current);
+      expect(controller.viewedFileIds).toEqual(new Set(["beta"]));
+      expect(controller.viewedFileCount).toBe(1);
+      expect(controller.totalFileCount).toBe(2);
+    } finally {
+      await act(async () => {
+        setup.renderer.destroy();
+      });
+    }
+  });
+
+  test("moves through unviewed visible files, wraps, and no-ops when none remain", async () => {
+    const { controllerRef, setup } = await renderReviewController([
+      createDiffFile("alpha", "alpha.ts", "export const alpha = 1;\n", "export const alpha = 2;\n"),
+      createDiffFile("beta", "beta.ts", "export const beta = 1;\n", "export const beta = 2;\n"),
+      createDiffFile("gamma", "gamma.ts", "export const gamma = 1;\n", "export const gamma = 2;\n"),
+    ]);
+
+    try {
+      await flush(setup);
+
+      await act(async () => {
+        expectValue(controllerRef.current).setFileViewed("beta", true);
+      });
+      await flush(setup);
+
+      await act(async () => {
+        expectValue(controllerRef.current).moveToUnviewedFile(1);
+      });
+      await flush(setup);
+      expect(expectValue(controllerRef.current).selectedFileId).toBe("gamma");
+
+      await act(async () => {
+        expectValue(controllerRef.current).moveToUnviewedFile(1);
+      });
+      await flush(setup);
+      expect(expectValue(controllerRef.current).selectedFileId).toBe("alpha");
+
+      await act(async () => {
+        const controller = expectValue(controllerRef.current);
+        controller.setFileViewed("alpha", true);
+        controller.setFileViewed("gamma", true);
+      });
+      await flush(setup);
+      await act(async () => {
+        expectValue(controllerRef.current).moveToUnviewedFile(1);
+      });
+      await flush(setup);
+      expect(expectValue(controllerRef.current).selectedFileId).toBe("alpha");
+
+      await act(async () => {
+        expectValue(controllerRef.current).setFileViewed("gamma", false);
+      });
+      await flush(setup);
+      await act(async () => {
+        expectValue(controllerRef.current).moveToUnviewedFile(1);
+      });
+      await flush(setup);
+      expect(expectValue(controllerRef.current).selectedFileId).toBe("gamma");
+
+      await act(async () => {
+        const controller = expectValue(controllerRef.current);
+        controller.setFilter("alpha");
+      });
+      await flush(setup);
+      expect(expectValue(controllerRef.current).selectedFileId).toBe("alpha");
+      await act(async () => {
+        expectValue(controllerRef.current).moveToUnviewedFile(1);
+      });
+      await flush(setup);
+      expect(expectValue(controllerRef.current).selectedFileId).toBe("alpha");
+    } finally {
+      await act(async () => {
+        setup.renderer.destroy();
+      });
+    }
+  });
+
+  test("drops viewed state when a soft reload replaces the file source fetcher", async () => {
+    const firstFetcher = createTestSourceFetcher((side) => (side === "new" ? "first\n" : null));
+    const secondFetcher = createTestSourceFetcher((side) => (side === "new" ? "second\n" : null));
+    const baseFile = createAlphaFile();
+    const { controllerRef, setFilesRef, setup } = await renderReviewController([
+      { ...baseFile, sourceFetcher: firstFetcher },
+    ]);
+
+    try {
+      await flush(setup);
+
+      await act(async () => {
+        expectValue(controllerRef.current).setFileViewed("alpha", true);
+      });
+      await flush(setup);
+      expect(expectValue(controllerRef.current).viewedFileIds).toEqual(new Set(["alpha"]));
+
+      await act(async () => {
+        expectValue(setFilesRef.current)([{ ...baseFile, sourceFetcher: secondFetcher }]);
+      });
+      await flush(setup);
+
+      expect(expectValue(controllerRef.current).viewedFileIds).toEqual(new Set());
+      expect(expectValue(controllerRef.current).viewedFileCount).toBe(0);
+    } finally {
+      await act(async () => {
+        setup.renderer.destroy();
+      });
+    }
+  });
+
   test("reselects the first visible file when filtering hides the current selection", async () => {
     const { controllerRef, setup } = await renderReviewController([
       createDiffFile("alpha", "alpha.ts", "export const alpha = 1;\n", "export const alpha = 2;\n"),

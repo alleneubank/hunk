@@ -48,6 +48,7 @@ import {
   buildReviewState,
   buildSelectedHunkSummary,
   findNextAnnotatedFile,
+  findNextUnviewedFile,
   resolveReviewNavigationTarget,
 } from "../lib/reviewState";
 
@@ -83,6 +84,15 @@ function removeKeys<T>(record: Record<string, T>, keys: ReadonlySet<string>): Re
     }
   }
   return changed ? next : record;
+}
+
+/** Return a new set with the given values omitted, or the original when nothing changed. */
+function removeSetValues<T>(values: ReadonlySet<T>, removedValues: ReadonlySet<T>): ReadonlySet<T> {
+  const next = new Set(values);
+  for (const value of removedValues) {
+    next.delete(value);
+  }
+  return next.size === values.size ? values : next;
 }
 
 /** Count array-backed entries in a file-id keyed note map. */
@@ -139,6 +149,7 @@ export interface ReviewController {
   reviewNoteSummaries: SessionReviewNoteSummary[];
   userNotesByFileId: Record<string, UserReviewNote[]>;
   moveToAnnotatedFile: (delta: number) => void;
+  moveToUnviewedFile: (delta: number) => void;
   moveToAnnotatedHunk: (delta: number) => void;
   moveToFile: (delta: number) => void;
   moveToHunk: (delta: number) => void;
@@ -150,8 +161,16 @@ export interface ReviewController {
   selectedHunk: DiffFile["metadata"]["hunks"][number] | undefined;
   selectedHunkIndex: number;
   sourceStatusByFileId: Record<string, FileSourceStatus>;
+  /** File ids marked as reviewed in the current changeset. */
+  viewedFileIds: ReadonlySet<string>;
+  /** Number of live files currently marked as viewed. */
+  viewedFileCount: number;
+  /** Total number of files in the unfiltered changeset. */
+  totalFileCount: number;
   toggleGap: (fileId: string, gapKey: string) => void;
   toggleSelectedHunkGap: () => void;
+  /** Toggle viewed state for the currently selected file. */
+  toggleViewedForSelectedFile: () => void;
   visibleFiles: DiffFile[];
   addLiveComment: (
     input: CommentToolInput,
@@ -173,6 +192,10 @@ export interface ReviewController {
   cancelDraftNote: () => void;
   removeUserNote: (noteId: string) => void;
   saveDraftNote: () => UserReviewNote | null;
+  /** Idempotently set viewed state for one file id. */
+  setFileViewed: (fileId: string, viewed: boolean) => void;
+  /** Replace all viewed file ids, such as during persistence rehydration. */
+  replaceViewedFileIds: (next: ReadonlySet<string>) => void;
   selectFile: (fileId: string, nextHunkIndex?: number, options?: ReviewSelectionOptions) => void;
   selectHunk: (fileId: string, hunkIndex: number, options?: ReviewSelectionOptions) => void;
   startUserNote: (
@@ -226,6 +249,7 @@ export function useReviewController({
   const [expandedGapsByFileId, setExpandedGapsByFileId] = useState<
     Record<string, ReadonlySet<string>>
   >({});
+  const [viewedFileIds, setViewedFileIds] = useState<ReadonlySet<string>>(() => new Set());
   const [sourceStatusByFileId, setSourceStatusByFileId] = useState<
     Record<string, FileSourceStatus>
   >({});
@@ -263,6 +287,7 @@ export function useReviewController({
       }
       setSourceStatusByFileId((prev) => removeKeys(prev, staleFileIds));
       setExpandedGapsByFileId((prev) => removeKeys(prev, staleFileIds));
+      setViewedFileIds((prev) => removeSetValues(prev, staleFileIds));
     }
   }
 
@@ -287,6 +312,15 @@ export function useReviewController({
         userNotesByFileId,
       ],
     );
+
+  /** Count viewed ids only when they still refer to files in the current changeset. */
+  const viewedFileCount = useMemo(
+    () => allFiles.reduce((count, file) => count + Number(viewedFileIds.has(file.id)), 0),
+    [allFiles, viewedFileIds],
+  );
+
+  /** Count every file in the current changeset, independent of the active filter. */
+  const totalFileCount = allFiles.length;
 
   /** Update the selection and reveal intent together so diff scrolling stays explicit. */
   const selectHunk = useCallback(
@@ -414,6 +448,19 @@ export function useReviewController({
     [selectFile, selectedFile?.id, visibleFiles],
   );
 
+  /** Cycle through only the currently visible files that are not viewed. */
+  const moveToUnviewedFile = useCallback(
+    (delta: number) => {
+      const nextFile = findNextUnviewedFile(visibleFiles, viewedFileIds, selectedFile?.id, delta);
+      if (!nextFile) {
+        return;
+      }
+
+      selectFile(nextFile.id);
+    },
+    [selectFile, selectedFile?.id, viewedFileIds, visibleFiles],
+  );
+
   /** Move through all currently visible files without wrapping past either end. */
   const moveToFile = useCallback(
     (delta: number) => {
@@ -441,6 +488,46 @@ export function useReviewController({
   const clearFilter = useCallback(() => {
     setFilter("");
   }, []);
+
+  /** Idempotently set viewed state for one file id. */
+  const setFileViewed = useCallback((fileId: string, viewed: boolean) => {
+    setViewedFileIds((current) => {
+      if (current.has(fileId) === viewed) {
+        return current;
+      }
+
+      const next = new Set(current);
+      if (viewed) {
+        next.add(fileId);
+      } else {
+        next.delete(fileId);
+      }
+      return next;
+    });
+  }, []);
+
+  /** Replace all viewed file ids with an immutable snapshot of the caller's set. */
+  const replaceViewedFileIds = useCallback((next: ReadonlySet<string>) => {
+    setViewedFileIds(new Set(next));
+  }, []);
+
+  /** Toggle viewed state for the currently selected file. */
+  const toggleViewedForSelectedFile = useCallback(() => {
+    const fileId = selectedFile?.id;
+    if (!fileId) {
+      return;
+    }
+
+    setViewedFileIds((current) => {
+      const next = new Set(current);
+      if (next.has(fileId)) {
+        next.delete(fileId);
+      } else {
+        next.add(fileId);
+      }
+      return next;
+    });
+  }, [selectedFile?.id]);
 
   /** Toggle expansion of one collapsed gap and lazily load source when needed. */
   const toggleGap = useCallback(
@@ -1067,8 +1154,12 @@ export function useReviewController({
     selectedHunk,
     selectedHunkIndex,
     sourceStatusByFileId,
+    totalFileCount,
     toggleGap,
     toggleSelectedHunkGap,
+    toggleViewedForSelectedFile,
+    viewedFileCount,
+    viewedFileIds,
     visibleFiles,
     addLiveComment,
     addLiveCommentBatch,
@@ -1077,12 +1168,15 @@ export function useReviewController({
     clearLiveComments,
     moveToAnnotatedFile,
     moveToAnnotatedHunk,
+    moveToUnviewedFile,
     moveToFile,
     moveToHunk,
     navigateToLocation,
     removeLiveComment,
     removeUserNote,
+    replaceViewedFileIds,
     saveDraftNote,
+    setFileViewed,
     selectFile,
     selectHunk,
     startUserNote,

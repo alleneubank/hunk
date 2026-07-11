@@ -1000,6 +1000,45 @@ async function parseSessionCommand(tokens: string[]): Promise<ParsedCliInput> {
     };
   }
 
+  if (subcommand === "viewed") {
+    const command = new Command("session viewed")
+      .description("set or clear viewed state for one file in a live Hunk session")
+      .argument("[sessionId]")
+      .requiredOption("--file <path>", "diff file path as shown by Hunk")
+      .option("--repo <path>", "target the live session whose repo root matches this path")
+      .option("--unset", "clear viewed state instead of setting it")
+      .option("--json", "emit structured JSON");
+
+    let parsedSessionId: string | undefined;
+    let parsedOptions: { repo?: string; file: string; unset?: boolean; json?: boolean } = {
+      file: "",
+    };
+
+    command.action(
+      (
+        sessionId: string | undefined,
+        options: { repo?: string; file: string; unset?: boolean; json?: boolean },
+      ) => {
+        parsedSessionId = sessionId;
+        parsedOptions = options;
+      },
+    );
+
+    if (rest.includes("--help") || rest.includes("-h")) {
+      return { kind: "help", text: `${command.helpInformation().trimEnd()}\n` };
+    }
+
+    await parseStandaloneCommand(command, rest);
+    return {
+      kind: "session",
+      action: "viewed-set",
+      output: resolveJsonOutput(parsedOptions),
+      selector: resolveExplicitSessionSelector(parsedSessionId, parsedOptions.repo),
+      filePath: parsedOptions.file,
+      viewed: !(parsedOptions.unset ?? false),
+    };
+  }
+
   if (subcommand === "reload") {
     const separatorIndex = rest.indexOf("--");
     const outerTokens = separatorIndex === -1 ? rest : rest.slice(0, separatorIndex);
