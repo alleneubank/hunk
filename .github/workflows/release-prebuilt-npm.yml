@@ -56,6 +56,11 @@ jobs:
 
       - name: Compare release benchmark snapshot
         id: benchmark-gate
+        # [fork] Dogfood -fork. prereleases carry no committed release-benchmark
+        # snapshot (`bun run bench:release` before tagging), so the perf compare
+        # would hard-fail and block the whole release. Skip the gate for fork
+        # tags; upstream v* releases still run it.
+        if: ${{ !contains(github.ref_name, '-fork.') }}
         continue-on-error: ${{ github.event_name == 'workflow_dispatch' && inputs.allow_benchmark_regression }}
         run: |
           mkdir -p dist/release
@@ -189,7 +194,10 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - stage-release
-    if: github.event_name == 'push' || inputs.publish == true
+    # [fork] The fork does not publish to npm. Gate this job behind an opt-in
+    # repo variable so it is SKIPPED (not failed) when `HUNK_NPM_PUBLISH` is
+    # unset — a failing `npm whoami` would otherwise turn the whole run red.
+    if: (github.event_name == 'push' || inputs.publish == true) && vars.HUNK_NPM_PUBLISH == 'true'
     environment: npm
     steps:
       - name: Check out repository
@@ -231,9 +239,11 @@ jobs:
   create-github-release:
     name: Create GitHub release
     runs-on: ubuntu-latest
+    # [fork] The fork ships GitHub-release tarballs, not npm packages, so the
+    # release must NOT wait on `publish` (which needs an npm token the fork
+    # lacks). Depend only on the built binaries; npm publish is gated off below.
     needs:
       - build-binaries
-      - publish
     if: github.event_name == 'push'
     permissions:
       contents: write
@@ -257,11 +267,11 @@ jobs:
           mkdir -p dist/release/github
           while IFS= read -r -d '' directory; do
             package_name="$(basename "$directory")"
-            binary="$directory/hunk"
-            if [ ! -f "$binary" ] && [ -f "$directory/hunk.exe" ]; then
-              binary="$directory/hunk.exe"
+            binary_name="hunk"
+            if [ ! -f "$directory/hunk" ] && [ -f "$directory/hunk.exe" ]; then
+              binary_name="hunk.exe"
             fi
-            if [ ! -f "$binary" ]; then
+            if [ ! -f "$directory/$binary_name" ]; then
               echo "Missing release binary in $directory" >&2
               exit 1
             fi
@@ -269,9 +279,15 @@ jobs:
               echo "Missing bundled Hunk review skill in $directory" >&2
               exit 1
             fi
-            chmod 0755 "$binary"
-            tar -C "$(dirname "$directory")" -czf "dist/release/github/${package_name}.tar.gz" "$package_name"
+            chmod 0755 "$directory/$binary_name"
+            # [fork] Flatten the archive: binary + skills/ + metadata.json sit at
+            # the tarball ROOT (not under a hunkdiff-<os>-<arch>/ directory) so
+            # mise's github: backend resolves `exe = "hunk"` directly on extract.
+            tar -C "$directory" -czf "dist/release/github/${package_name}.tar.gz" \
+              "$binary_name" skills metadata.json
           done < <(find dist/release/artifacts -mindepth 1 -maxdepth 1 -type d -name 'hunkdiff-*' -print0 | sort -z)
+          # [fork] Emit a sha256 manifest (`<hash>  <name>`) over the tarballs.
+          ( cd dist/release/github && sha256sum *.tar.gz > checksums.txt )
           find dist/release/github -maxdepth 1 -type f | sort
 
       - name: Create or update GitHub release
@@ -281,7 +297,8 @@ jobs:
         run: |
           prerelease_args=()
           case "$TAG_NAME" in
-            *-alpha*|*-beta*|*-rc*)
+            # [fork] `-fork.` dogfood tags are always prereleases.
+            *-alpha*|*-beta*|*-rc*|*-fork.*)
               prerelease_args+=(--prerelease)
               ;;
           esac
