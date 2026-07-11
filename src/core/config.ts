@@ -3,6 +3,7 @@ import { join, resolve } from "node:path";
 import { BUNDLED_SHIKI_THEME_IDS } from "../ui/lib/shikiThemes";
 import { normalizeBuiltInThemeId } from "../ui/themes";
 import { AGENT_CONTEXT_FILENAME, HUNK_DIR_NAME, resolveGlobalConfigPath } from "./paths";
+import { isRecord } from "./typeGuards";
 import { detectVcs, findVcsRepoRootCandidate, getDefaultVcsAdapter, isVcsId } from "./vcs";
 import type {
   CliInput,
@@ -85,10 +86,6 @@ interface HunkConfigResolution {
   customTheme?: CustomThemeConfig;
   globalConfigPath?: string;
   repoConfigPath?: string;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /** Accept only the layout names Hunk already supports. */
