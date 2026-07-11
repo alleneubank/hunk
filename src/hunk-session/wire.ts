@@ -234,7 +234,19 @@ function parseHunkSessionState(value: unknown): HunkSessionState | null {
 
   const selectedHunkIndex = brokerWireParsers.parseNonNegativeInt(record.selectedHunkIndex);
   const showAgentNotes = typeof record.showAgentNotes === "boolean" ? record.showAgentNotes : null;
-  if (selectedHunkIndex === null || showAgentNotes === null) {
+  const viewedFileCount =
+    record.viewedFileCount === undefined
+      ? 0
+      : brokerWireParsers.parseNonNegativeInt(record.viewedFileCount);
+  const viewedFilePaths = record.viewedFilePaths === undefined ? [] : record.viewedFilePaths;
+  if (
+    selectedHunkIndex === null ||
+    showAgentNotes === null ||
+    viewedFileCount === null ||
+    !Array.isArray(viewedFilePaths) ||
+    viewedFilePaths.length > MAX_REGISTRATION_FILES ||
+    viewedFilePaths.some((filePath) => typeof filePath !== "string")
+  ) {
     return null;
   }
 
@@ -257,6 +269,8 @@ function parseHunkSessionState(value: unknown): HunkSessionState | null {
     liveComments,
     reviewNoteCount: reviewNotes.length,
     reviewNotes,
+    viewedFileCount,
+    viewedFilePaths: viewedFilePaths as string[],
   };
 }
 

@@ -1,5 +1,5 @@
 import type { AppTheme } from "../../themes";
-import { fitText } from "../../lib/text";
+import { fitText, measureTextWidth } from "../../lib/text";
 import type { MenuId, MenuSpec } from "./menu";
 
 /** Render the top menu bar and the current changeset title. */
@@ -9,6 +9,7 @@ export function MenuBar({
   terminalWidth,
   theme,
   topTitle,
+  viewedProgressText,
   onHoverMenu,
   onToggleMenu,
 }: {
@@ -17,9 +18,13 @@ export function MenuBar({
   terminalWidth: number;
   theme: AppTheme;
   topTitle: string;
+  viewedProgressText?: string;
   onHoverMenu: (menuId: MenuId) => void;
   onToggleMenu: (menuId: MenuId) => void;
 }) {
+  const viewedProgressSegment = viewedProgressText ? ` ${viewedProgressText}` : "";
+  const topTitleWidth = Math.max(0, terminalWidth - 41 - measureTextWidth(viewedProgressSegment));
+
   return (
     <box
       style={{
@@ -49,8 +54,17 @@ export function MenuBar({
         );
       })}
 
-      <box style={{ flexGrow: 1, height: 1, alignItems: "center", justifyContent: "flex-end" }}>
-        <text fg={theme.muted}>{` ${fitText(topTitle, Math.max(0, terminalWidth - 41))}`}</text>
+      <box
+        style={{
+          flexGrow: 1,
+          height: 1,
+          flexDirection: "row",
+          alignItems: "center",
+          justifyContent: "flex-end",
+        }}
+      >
+        <text fg={theme.muted}>{` ${fitText(topTitle, topTitleWidth)}`}</text>
+        {viewedProgressSegment ? <text fg={theme.muted}>{viewedProgressSegment}</text> : null}
       </box>
     </box>
   );

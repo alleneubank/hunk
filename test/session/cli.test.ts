@@ -1,5 +1,6 @@
 import { afterAll, afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { cleanupTestConfigHomes, createTestConfigHome } from "../helpers/config-home";
@@ -63,6 +64,24 @@ function waitUntil<T>(
       reject(new Error(`Timed out waiting for ${label}.`));
     })().catch(reject);
   });
+}
+
+async function reserveLoopbackPort() {
+  const listener = createServer(() => undefined);
+  await new Promise<void>((resolve, reject) => {
+    listener.once("error", reject);
+    listener.listen(0, "127.0.0.1", () => resolve());
+  });
+
+  const address = listener.address();
+  const port = typeof address === "object" && address ? address.port : 0;
+  await new Promise<void>((resolve) => listener.close(() => resolve()));
+
+  if (!port) {
+    throw new Error("Failed to reserve a loopback port for the viewed session test.");
+  }
+
+  return port;
 }
 
 function createFixtureFiles(name: string, beforeLines: string[], afterLines: string[]) {
@@ -167,6 +186,12 @@ describe("session CLI integration", () => {
       expect(JSON.parse(get.stdout)).toMatchObject({
         session: {
           sessionId,
+          snapshot: {
+            state: {
+              viewedFileCount: 0,
+              viewedFilePaths: [],
+            },
+          },
           files: [
             {
               path: fixture.afterName,
@@ -194,6 +219,116 @@ describe("session CLI integration", () => {
       await session.exited;
     }
   });
+
+  test("viewed set and unset update the live snapshot without changing state for unknown files", async () => {
+    if (!ttyToolsAvailable) {
+      return;
+    }
+
+    const port = await reserveLoopbackPort();
+    const fixture = createFixtureFiles(
+      "viewed",
+      ["export const value = 1;"],
+      ["export const value = 2;"],
+    );
+    const session = spawnHunkSession(fixture, { port, quitAfterSeconds: 18, timeoutSeconds: 20 });
+
+    try {
+      const listed = await waitUntil("registered live session", () => {
+        const { proc, stdout } = runSessionCli(["list", "--json"], port);
+        if (proc.exitCode !== 0) {
+          return null;
+        }
+
+        const parsed = JSON.parse(stdout) as SessionListJson;
+        return parsed.sessions.length > 0 ? parsed.sessions : null;
+      });
+      const sessionId = listed[0]!.sessionId;
+
+      const marked = runSessionCli(
+        ["viewed", sessionId, "--file", fixture.afterName, "--json"],
+        port,
+      );
+      expect(marked.proc.exitCode).toBe(0);
+      expect(marked.stderr).toBe("");
+      expect(JSON.parse(marked.stdout)).toEqual({
+        result: {
+          filePath: fixture.afterName,
+          viewed: true,
+          viewedFileCount: 1,
+          totalFileCount: 1,
+        },
+      });
+
+      await waitUntil("viewed snapshot update", () => {
+        const get = runSessionCli(["get", sessionId, "--json"], port);
+        if (get.proc.exitCode !== 0) {
+          return null;
+        }
+
+        const parsed = JSON.parse(get.stdout) as {
+          session?: {
+            snapshot?: { state?: { viewedFileCount?: number; viewedFilePaths?: string[] } };
+          };
+        };
+        return parsed.session?.snapshot?.state?.viewedFileCount === 1 ? parsed : null;
+      });
+
+      const markedAgain = runSessionCli(["viewed", sessionId, "--file", fixture.afterName], port);
+      expect(markedAgain.proc.exitCode).toBe(0);
+      expect(markedAgain.stdout).toContain("viewed 1/1");
+
+      const unknown = runSessionCli(["viewed", sessionId, "--file", "missing.ts", "--json"], port);
+      expect(unknown.proc.exitCode).toBe(1);
+      expect(unknown.stderr).toContain("No diff file matches missing.ts.");
+
+      const afterUnknown = runSessionCli(["get", sessionId, "--json"], port);
+      expect(JSON.parse(afterUnknown.stdout)).toMatchObject({
+        session: {
+          snapshot: {
+            state: {
+              viewedFileCount: 1,
+              viewedFilePaths: [fixture.afterName],
+            },
+          },
+        },
+      });
+
+      const unmarked = runSessionCli(
+        ["viewed", sessionId, "--file", fixture.afterName, "--unset", "--json"],
+        port,
+      );
+      expect(unmarked.proc.exitCode).toBe(0);
+      expect(JSON.parse(unmarked.stdout)).toEqual({
+        result: {
+          filePath: fixture.afterName,
+          viewed: false,
+          viewedFileCount: 0,
+          totalFileCount: 1,
+        },
+      });
+
+      await waitUntil("unviewed snapshot update", () => {
+        const get = runSessionCli(["get", sessionId, "--json"], port);
+        if (get.proc.exitCode !== 0) {
+          return null;
+        }
+
+        const parsed = JSON.parse(get.stdout) as {
+          session?: {
+            snapshot?: { state?: { viewedFileCount?: number; viewedFilePaths?: string[] } };
+          };
+        };
+        return parsed.session?.snapshot?.state?.viewedFileCount === 0 &&
+          parsed.session.snapshot.state?.viewedFilePaths?.length === 0
+          ? parsed
+          : null;
+      });
+    } finally {
+      session.kill();
+      await session.exited;
+    }
+  }, 25_000);
 
   test("reload replaces what a live session is showing", async () => {
     if (!ttyToolsAvailable) {

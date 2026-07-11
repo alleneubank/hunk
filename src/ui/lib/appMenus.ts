@@ -8,6 +8,7 @@ export interface BuildAppMenusOptions {
   moveToAnnotatedFile: (delta: number) => void;
   moveToAnnotatedHunk: (delta: number) => void;
   moveToHunk: (delta: number) => void;
+  moveToUnviewedFile: (delta: number) => void;
   refreshCurrentInput: () => void;
   requestQuit: () => void;
   selectLayoutMode: (mode: LayoutMode) => void;
@@ -19,6 +20,7 @@ export interface BuildAppMenusOptions {
   showLineNumbers: boolean;
   showMenuBar: boolean;
   renderSidebar: boolean;
+  selectedFileViewed: boolean;
   toggleCopyDecorations: () => void;
   toggleAgentNotes: () => void;
   toggleFocusArea: () => void;
@@ -29,6 +31,7 @@ export interface BuildAppMenusOptions {
   toggleMenuBar: () => void;
   toggleLineWrap: () => void;
   toggleSidebar: () => void;
+  toggleViewedForSelectedFile: () => void;
   triggerEditSelectedFile: () => void;
   wrapLines: boolean;
 }
@@ -41,6 +44,7 @@ export function buildAppMenus({
   moveToAnnotatedFile,
   moveToAnnotatedHunk,
   moveToHunk,
+  moveToUnviewedFile,
   refreshCurrentInput,
   requestQuit,
   selectLayoutMode,
@@ -52,6 +56,7 @@ export function buildAppMenus({
   showLineNumbers,
   showMenuBar,
   renderSidebar,
+  selectedFileViewed,
   toggleCopyDecorations,
   toggleAgentNotes,
   toggleFocusArea,
@@ -62,6 +67,7 @@ export function buildAppMenus({
   toggleMenuBar,
   toggleLineWrap,
   toggleSidebar,
+  toggleViewedForSelectedFile,
   triggerEditSelectedFile,
   wrapLines,
 }: BuildAppMenusOptions): Record<MenuId, MenuEntry[]> {
@@ -212,6 +218,26 @@ export function buildAppMenus({
         label: "Next comment",
         hint: "}",
         action: () => moveToAnnotatedHunk(1),
+      },
+      { kind: "separator" },
+      {
+        kind: "item",
+        label: "Mark file viewed",
+        hint: "v",
+        checked: selectedFileViewed,
+        action: toggleViewedForSelectedFile,
+      },
+      {
+        kind: "item",
+        label: "Next unviewed file",
+        hint: ">",
+        action: () => moveToUnviewedFile(1),
+      },
+      {
+        kind: "item",
+        label: "Previous unviewed file",
+        hint: "<",
+        action: () => moveToUnviewedFile(-1),
       },
       { kind: "separator" },
       {

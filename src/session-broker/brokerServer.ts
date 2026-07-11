@@ -23,6 +23,7 @@ import type {
   NavigatedSelectionResult,
   ReloadedSessionResult,
   RemovedCommentResult,
+  SetViewedResult,
 } from "../hunk-session/types";
 import {
   MAX_HTTP_BODY_BYTES,
@@ -51,6 +52,7 @@ const SUPPORTED_SESSION_ACTIONS: SessionDaemonAction[] = [
   "context",
   "review",
   "navigate",
+  "viewed-set",
   "reload",
   "comment-add",
   "comment-apply",
@@ -269,6 +271,21 @@ export async function handleSessionApiRequest(state: HunkSessionBrokerState, req
               commentDirection: input.commentDirection,
             },
             timeoutMessage: "Timed out waiting for the session to navigate to the requested hunk.",
+          }),
+        };
+        break;
+      }
+      case "viewed-set": {
+        response = {
+          result: await state.dispatchCommand<SetViewedResult, "set_viewed">({
+            selector: input.selector,
+            command: "set_viewed",
+            input: {
+              ...input.selector,
+              filePath: input.filePath,
+              viewed: input.viewed,
+            },
+            timeoutMessage: "Timed out waiting for the session to update viewed state.",
           }),
         };
         break;

@@ -3,6 +3,7 @@ import { createTestAgentFileContext, createTestDiffFile } from "../../../test/he
 import {
   buildSelectedHunkSummary,
   findNextAnnotatedFile,
+  findNextUnviewedFile,
   resolveReviewNavigationTarget,
 } from "./reviewState";
 
@@ -36,6 +37,38 @@ describe("review state helpers", () => {
     expect(findNextAnnotatedFile([alpha, beta, gamma], "gamma", 1)).toBe(alpha);
     expect(findNextAnnotatedFile([alpha, beta, gamma], undefined, -1)).toBe(gamma);
     expect(findNextAnnotatedFile([beta], "beta", 1)).toBeNull();
+  });
+
+  test("findNextUnviewedFile skips viewed files and wraps relative to an unviewed file", () => {
+    const alpha = createTestDiffFile({ id: "alpha", path: "alpha.ts" });
+    const beta = createTestDiffFile({ id: "beta", path: "beta.ts" });
+    const gamma = createTestDiffFile({ id: "gamma", path: "gamma.ts" });
+    const delta = createTestDiffFile({ id: "delta", path: "delta.ts" });
+    const visibleFiles = [alpha, beta, gamma, delta];
+    const viewedFileIds = new Set(["beta", "delta"]);
+
+    expect(findNextUnviewedFile(visibleFiles, viewedFileIds, "alpha", 1)).toBe(gamma);
+    expect(findNextUnviewedFile(visibleFiles, viewedFileIds, "gamma", 1)).toBe(alpha);
+    expect(findNextUnviewedFile(visibleFiles, viewedFileIds, "alpha", -1)).toBe(gamma);
+  });
+
+  test("findNextUnviewedFile starts from visible position when the current file is viewed", () => {
+    const alpha = createTestDiffFile({ id: "alpha", path: "alpha.ts" });
+    const beta = createTestDiffFile({ id: "beta", path: "beta.ts" });
+    const gamma = createTestDiffFile({ id: "gamma", path: "gamma.ts" });
+    const visibleFiles = [alpha, beta, gamma];
+    const viewedFileIds = new Set(["beta"]);
+
+    expect(findNextUnviewedFile(visibleFiles, viewedFileIds, "beta", 1)).toBe(gamma);
+    expect(findNextUnviewedFile(visibleFiles, viewedFileIds, "beta", -1)).toBe(alpha);
+    expect(findNextUnviewedFile(visibleFiles, viewedFileIds, "missing", -1)).toBe(alpha);
+  });
+
+  test("findNextUnviewedFile returns null when every visible file is viewed", () => {
+    const alpha = createTestDiffFile({ id: "alpha", path: "alpha.ts" });
+    const beta = createTestDiffFile({ id: "beta", path: "beta.ts" });
+
+    expect(findNextUnviewedFile([alpha, beta], new Set(["alpha", "beta"]), "alpha", 1)).toBeNull();
   });
 
   // Intent: comment navigation targets the next noted hunk and scrolls to the note.

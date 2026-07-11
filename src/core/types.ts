@@ -226,6 +226,15 @@ export interface SessionNavigateCommandInput {
   commentDirection?: "next" | "prev";
 }
 
+export interface SessionViewedSetCommandInput {
+  kind: "session";
+  action: "viewed-set";
+  output: SessionCommandOutput;
+  selector: SessionSelectorInput;
+  filePath: string;
+  viewed: boolean;
+}
+
 export interface SessionReloadCommandInput {
   kind: "session";
   action: "reload";
@@ -302,6 +311,7 @@ export type SessionCommandInput =
   | SessionGetCommandInput
   | SessionReviewCommandInput
   | SessionNavigateCommandInput
+  | SessionViewedSetCommandInput
   | SessionReloadCommandInput
   | SessionCommentAddCommandInput
   | SessionCommentApplyCommandInput

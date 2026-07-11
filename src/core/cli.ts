@@ -636,6 +636,7 @@ async function parseSessionCommand(tokens: string[]): Promise<ParsedCliInput> {
           "  hunk session review --repo <path> [--include-patch] [--include-notes]",
           "  hunk session navigate (<session-id> | --repo <path>) --file <path> (--hunk <n> | --old-line <n> | --new-line <n>)",
           "  hunk session navigate (<session-id> | --repo <path>) (--next-comment | --prev-comment)",
+          "  hunk session viewed (<session-id> | --repo <path>) --file <path> [--unset]",
           "  hunk session reload (<session-id> | --repo <path> | --session-path <path>) [--source <path>] -- diff [ref] [-- <pathspec...>]",
           "  hunk session reload (<session-id> | --repo <path> | --session-path <path>) [--source <path>] -- show [ref] [-- <pathspec...>]",
           "  hunk session comment add (<session-id> | --repo <path>) --file <path> (--old-line <n> | --new-line <n>) --summary <text> [--focus]",
@@ -827,6 +828,45 @@ async function parseSessionCommand(tokens: string[]): Promise<ParsedCliInput> {
             ? "new"
             : undefined,
       line: parsedOptions.oldLine ?? parsedOptions.newLine,
+    };
+  }
+
+  if (subcommand === "viewed") {
+    const command = new Command("session viewed")
+      .description("set or clear viewed state for one file in a live Hunk session")
+      .argument("[sessionId]")
+      .requiredOption("--file <path>", "diff file path as shown by Hunk")
+      .option("--repo <path>", "target the live session whose repo root matches this path")
+      .option("--unset", "clear viewed state instead of setting it")
+      .option("--json", "emit structured JSON");
+
+    let parsedSessionId: string | undefined;
+    let parsedOptions: { repo?: string; file: string; unset?: boolean; json?: boolean } = {
+      file: "",
+    };
+
+    command.action(
+      (
+        sessionId: string | undefined,
+        options: { repo?: string; file: string; unset?: boolean; json?: boolean },
+      ) => {
+        parsedSessionId = sessionId;
+        parsedOptions = options;
+      },
+    );
+
+    if (rest.includes("--help") || rest.includes("-h")) {
+      return { kind: "help", text: `${command.helpInformation().trimEnd()}\n` };
+    }
+
+    await parseStandaloneCommand(command, rest);
+    return {
+      kind: "session",
+      action: "viewed-set",
+      output: resolveJsonOutput(parsedOptions),
+      selector: resolveExplicitSessionSelector(parsedSessionId, parsedOptions.repo),
+      filePath: parsedOptions.file,
+      viewed: !(parsedOptions.unset ?? false),
     };
   }
 

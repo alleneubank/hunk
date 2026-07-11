@@ -109,6 +109,8 @@ export function createInitialSessionSnapshot(bootstrap: AppBootstrap): HunkSessi
       liveComments: [],
       reviewNoteCount: 0,
       reviewNotes: [],
+      viewedFileCount: 0,
+      viewedFilePaths: [],
     },
   };
 }
