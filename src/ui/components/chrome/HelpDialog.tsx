@@ -24,7 +24,7 @@ export function HelpDialog({
         ["Space / f", "page down (alt: f)"],
         ["b", "page up"],
         ["Shift+Space", "page up (alt)"],
-        ["d / u", "half page down / up"],
+        ["d", "half page down"],
         ["[ / ]", "previous / next hunk"],
         [", / .", "previous / next file"],
         ["{ / }", "previous / next comment"],
@@ -54,6 +54,8 @@ export function HelpDialog({
     {
       title: "Review",
       items: [
+        ["v", "Toggle viewed for selected file"],
+        ["> / <", "next / previous unviewed file"],
         ["/", "focus file filter"],
         ["c", "create review note"],
         ["Tab", "toggle files/filter focus"],

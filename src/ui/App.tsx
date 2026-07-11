@@ -4,6 +4,7 @@ import {
   type ScrollBoxRenderable,
 } from "@opentui/core";
 import { useRenderer, useTerminalDimensions } from "@opentui/react";
+import { isAbsolute } from "node:path";
 import { Suspense, lazy, useCallback, useEffect, useMemo, useState, useRef } from "react";
 import type { AppBootstrap, CliInput, LayoutMode, UserNoteLineTarget } from "../core/types";
 import { canReloadInput, computeWatchSignature } from "../core/watch";
@@ -23,6 +24,7 @@ import { useAppKeyboardShortcuts } from "./hooks/useAppKeyboardShortcuts";
 import { useHunkSessionBridge } from "./hooks/useHunkSessionBridge";
 import { useMenuController } from "./hooks/useMenuController";
 import { useReviewController } from "./hooks/useReviewController";
+import { useViewedStatePersistence } from "./hooks/useViewedStatePersistence";
 import { buildAppMenus } from "./lib/appMenus";
 import { fileRowId } from "./lib/ids";
 import { openSelectedFileInEditor } from "./lib/openInEditor";
@@ -110,6 +112,20 @@ export function App({
   const DIVIDER_HIT_WIDTH = 5;
 
   const pagerMode = Boolean(bootstrap.input.options.pager);
+  const viewedStateRepoRoot = useMemo(() => {
+    const repoBackedInput =
+      bootstrap.input.kind === "vcs" ||
+      bootstrap.input.kind === "show" ||
+      bootstrap.input.kind === "stash-show";
+
+    // VCS loaders set sourceLabel to the canonical root. Re-derive it because daemon soft reloads
+    // replace bootstrap with resetApp:false and must never retain the previous review's root.
+    return repoBackedInput &&
+      !bootstrap.input.options.pager &&
+      isAbsolute(bootstrap.changeset.sourceLabel)
+      ? bootstrap.changeset.sourceLabel
+      : null;
+  }, [bootstrap]);
   const renderer = useRenderer();
   const terminal = useTerminalDimensions();
   const sidebarScrollRef = useRef<ScrollBoxRenderable | null>(null);
@@ -182,12 +198,26 @@ export function App({
     [activeTheme.id, themeOptions],
   );
   const review = useReviewController({ files: bootstrap.changeset.files });
+  useViewedStatePersistence({
+    repoRoot: viewedStateRepoRoot,
+    files: bootstrap.changeset.files,
+    viewedFileIds: review.viewedFileIds,
+    replaceViewedFileIds: review.replaceViewedFileIds,
+  });
   const filteredFiles = review.visibleFiles;
   const selectedFile = review.selectedFile;
   const selectedHunkIndex = review.selectedHunkIndex;
   const moveToAnnotatedFile = review.moveToAnnotatedFile;
   const moveToAnnotatedHunk = review.moveToAnnotatedHunk;
   const moveToFile = review.moveToFile;
+  const moveToUnviewedFile = review.moveToUnviewedFile;
+  const selectedFileViewed = Boolean(
+    review.selectedFile && review.viewedFileIds.has(review.selectedFile.id),
+  );
+  const viewedProgressText =
+    review.totalFileCount > 0
+      ? `viewed ${review.viewedFileCount}/${review.totalFileCount}`
+      : undefined;
 
   const jumpToFile = useCallback(
     (fileId: string, nextHunkIndex = 0, options?: { alignFileHeaderTop?: boolean }) => {
@@ -226,6 +256,7 @@ export function App({
     addLiveComment: review.addLiveComment,
     addLiveCommentBatch: review.addLiveCommentBatch,
     clearLiveComments: review.clearLiveComments,
+    files: bootstrap.changeset.files,
     hostClient,
     liveCommentCount: review.liveCommentCount,
     liveCommentSummaries: review.liveCommentSummaries,
@@ -235,10 +266,14 @@ export function App({
     removeLiveComment: review.removeLiveComment,
     reviewNoteCount: review.reviewNoteCount,
     reviewNoteSummaries: review.reviewNoteSummaries,
+    setFileViewed: review.setFileViewed,
     selectedFile,
     selectedHunk: review.selectedHunk,
     selectedHunkIndex,
     showAgentNotes,
+    totalFileCount: review.totalFileCount,
+    viewedFileCount: review.viewedFileCount,
+    viewedFileIds: review.viewedFileIds,
   });
 
   const bodyPadding = pagerMode ? 0 : BODY_PADDING;
@@ -744,6 +779,7 @@ export function App({
         moveToAnnotatedFile,
         moveToAnnotatedHunk,
         moveToHunk: review.moveToHunk,
+        moveToUnviewedFile,
         refreshCurrentInput: triggerRefreshCurrentInput,
         requestQuit,
         selectLayoutMode,
@@ -755,6 +791,7 @@ export function App({
         showLineNumbers,
         showMenuBar,
         renderSidebar,
+        selectedFileViewed,
         toggleCopyDecorations,
         toggleAgentNotes,
         toggleFocusArea,
@@ -765,6 +802,7 @@ export function App({
         toggleMenuBar,
         toggleLineWrap,
         toggleSidebar,
+        toggleViewedForSelectedFile: review.toggleViewedForSelectedFile,
         triggerEditSelectedFile,
         wrapLines,
       }),
@@ -775,8 +813,10 @@ export function App({
       layoutMode,
       moveToAnnotatedFile,
       moveToAnnotatedHunk,
+      moveToUnviewedFile,
       requestQuit,
       review.moveToHunk,
+      review.toggleViewedForSelectedFile,
       openAgentSkill,
       selectLayoutMode,
       openThemeSelector,
@@ -788,6 +828,7 @@ export function App({
       showLineNumbers,
       showMenuBar,
       renderSidebar,
+      selectedFileViewed,
       toggleAgentNotes,
       toggleFocusArea,
       toggleHelp,
@@ -832,6 +873,7 @@ export function App({
     moveToAnnotatedHunk,
     moveToFile,
     moveToHunk: review.moveToHunk,
+    moveToUnviewedFile,
     moveMenuItem,
     moveThemeSelector,
     openMenu,
@@ -856,6 +898,7 @@ export function App({
     toggleMenuBar,
     toggleLineWrap,
     toggleSidebar,
+    toggleViewedForSelectedFile: review.toggleViewedForSelectedFile,
     triggerEditSelectedFile,
     triggerRefreshCurrentInput,
   });
@@ -939,6 +982,7 @@ export function App({
           terminalWidth={terminal.width}
           theme={activeTheme}
           topTitle={topTitle}
+          viewedProgressText={viewedProgressText}
           onHoverMenu={(menuId) => {
             if (activeMenuId) {
               openMenu(menuId);
@@ -1063,6 +1107,7 @@ export function App({
           noticeText={sessionNoticeText ?? transientNoticeText ?? noticeText ?? undefined}
           terminalWidth={terminal.width}
           theme={activeTheme}
+          viewedProgressText={viewedProgressText}
           onCloseMenu={closeMenu}
           onFilterInput={review.setFilter}
           onFilterSubmit={focusFiles}

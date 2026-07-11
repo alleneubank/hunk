@@ -8,6 +8,7 @@ export function StatusBar({
   noticeText,
   terminalWidth,
   theme,
+  viewedProgressText,
   onCloseMenu,
   onFilterInput,
   onFilterSubmit,
@@ -17,10 +18,13 @@ export function StatusBar({
   noticeText?: string;
   terminalWidth: number;
   theme: AppTheme;
+  viewedProgressText?: string;
   onCloseMenu: () => void;
   onFilterInput: (value: string) => void;
   onFilterSubmit: () => void;
 }) {
+  const viewedProgressWidth = viewedProgressText?.length ?? 0;
+
   return (
     <box
       style={{
@@ -40,7 +44,7 @@ export function StatusBar({
             <text fg={theme.muted}> </text>
           </box>
           <input
-            width={Math.max(12, terminalWidth - 11)}
+            width={Math.max(1, terminalWidth - 11 - viewedProgressWidth)}
             value={filter}
             placeholder="type to filter files"
             focused={true}
@@ -68,6 +72,12 @@ export function StatusBar({
       ) : (
         <text fg={theme.muted}>{noticeText ?? ""}</text>
       )}
+      {viewedProgressText ? (
+        <>
+          <box style={{ height: 1, flexGrow: 1 }} />
+          <text fg={theme.muted}>{viewedProgressText}</text>
+        </>
+      ) : null}
     </box>
   );
 }

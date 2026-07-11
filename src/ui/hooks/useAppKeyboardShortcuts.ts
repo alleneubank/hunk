@@ -65,6 +65,7 @@ export interface UseAppKeyboardShortcutsOptions {
   moveToAnnotatedHunk: (delta: number) => void;
   moveToFile: (delta: number) => void;
   moveToHunk: (delta: number) => void;
+  moveToUnviewedFile: (delta: number) => void;
   moveMenuItem: (delta: number) => void;
   moveThemeSelector: (delta: number) => void;
   openMenu: (menuId: MenuId) => void;
@@ -89,6 +90,7 @@ export interface UseAppKeyboardShortcutsOptions {
   toggleLineWrap: () => void;
   themeSelectorOpen: boolean;
   toggleSidebar: () => void;
+  toggleViewedForSelectedFile: () => void;
   triggerEditSelectedFile: () => void;
   triggerRefreshCurrentInput: () => void;
 }
@@ -109,6 +111,7 @@ export function useAppKeyboardShortcuts({
   moveToAnnotatedHunk,
   moveToFile,
   moveToHunk,
+  moveToUnviewedFile,
   moveMenuItem,
   moveThemeSelector,
   openMenu,
@@ -134,6 +137,7 @@ export function useAppKeyboardShortcuts({
   toggleLineNumbers,
   toggleLineWrap,
   toggleSidebar,
+  toggleViewedForSelectedFile,
   triggerRefreshCurrentInput,
 }: UseAppKeyboardShortcutsOptions) {
   const activeMenuIdRef = useRef(activeMenuId);
@@ -540,6 +544,11 @@ export function useAppKeyboardShortcuts({
       return;
     }
 
+    if (key.name === "v" || key.sequence === "v") {
+      runAndCloseMenu(toggleViewedForSelectedFile);
+      return;
+    }
+
     if (key.name === "e" || key.sequence === "e") {
       runAndCloseMenu(triggerEditSelectedFile);
       return;
@@ -572,6 +581,18 @@ export function useAppKeyboardShortcuts({
 
     if (key.sequence === "}") {
       runAndCloseMenu(() => moveToAnnotatedHunk(1));
+      return;
+    }
+
+    // Shifted `,`/`.`: the unviewed variant of plain file navigation, mirroring
+    // how `{`/`}` shift `[`/`]` to annotated hunks.
+    if (key.sequence === "<") {
+      runAndCloseMenu(() => moveToUnviewedFile(-1));
+      return;
+    }
+
+    if (key.sequence === ">") {
+      runAndCloseMenu(() => moveToUnviewedFile(1));
     }
   };
 

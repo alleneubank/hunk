@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, mock, test } from "bun:test";
 import { parseDiffFromFile } from "@pierre/diffs";
 import type { KeyEvent } from "@opentui/core";
 import type { DiffFile } from "../../core/types";
@@ -129,6 +129,8 @@ describe("ui helpers", () => {
   });
 
   test("buildAppMenus creates checked entries from the current app state", () => {
+    const moveToUnviewedFile = mock((_delta: number) => {});
+    const toggleViewedForSelectedFile = mock(() => {});
     const menus = buildAppMenus({
       canRefreshCurrentInput: true,
       focusFilter: () => {},
@@ -136,6 +138,7 @@ describe("ui helpers", () => {
       moveToAnnotatedFile: () => {},
       moveToAnnotatedHunk: () => {},
       moveToHunk: () => {},
+      moveToUnviewedFile,
       refreshCurrentInput: () => {},
       requestQuit: () => {},
       selectLayoutMode: () => {},
@@ -147,6 +150,7 @@ describe("ui helpers", () => {
       showLineNumbers: true,
       showMenuBar: true,
       renderSidebar: false,
+      selectedFileViewed: true,
       toggleCopyDecorations: () => {},
       toggleAgentNotes: () => {},
       toggleFocusArea: () => {},
@@ -157,6 +161,7 @@ describe("ui helpers", () => {
       toggleMenuBar: () => {},
       toggleLineWrap: () => {},
       toggleSidebar: () => {},
+      toggleViewedForSelectedFile,
       triggerEditSelectedFile: () => {},
       wrapLines: true,
     });
@@ -197,6 +202,42 @@ describe("ui helpers", () => {
         .filter((entry): entry is Extract<MenuEntry, { kind: "item" }> => entry.kind === "item")
         .map((entry) => entry.label),
     ).toContain("Themes…");
+    expect(
+      menus.navigate
+        .filter((entry): entry is Extract<MenuEntry, { kind: "item" }> => entry.kind === "item")
+        .map((entry) => entry.label),
+    ).toEqual([
+      "Previous hunk",
+      "Next hunk",
+      "Previous comment",
+      "Next comment",
+      "Mark file viewed",
+      "Next unviewed file",
+      "Previous unviewed file",
+      "Focus filter",
+    ]);
+    const markViewed = menus.navigate.find(
+      (entry): entry is Extract<MenuEntry, { kind: "item" }> =>
+        entry.kind === "item" && entry.label === "Mark file viewed",
+    );
+    const nextUnviewed = menus.navigate.find(
+      (entry): entry is Extract<MenuEntry, { kind: "item" }> =>
+        entry.kind === "item" && entry.label === "Next unviewed file",
+    );
+    const previousUnviewed = menus.navigate.find(
+      (entry): entry is Extract<MenuEntry, { kind: "item" }> =>
+        entry.kind === "item" && entry.label === "Previous unviewed file",
+    );
+    expect(markViewed).toMatchObject({ checked: true, hint: "v" });
+    expect(nextUnviewed).toMatchObject({ hint: ">" });
+    expect(previousUnviewed).toMatchObject({ hint: "<" });
+    markViewed?.action();
+    nextUnviewed?.action();
+    previousUnviewed?.action();
+    expect(toggleViewedForSelectedFile).toHaveBeenCalledTimes(1);
+    expect(moveToUnviewedFile).toHaveBeenCalledTimes(2);
+    expect(moveToUnviewedFile).toHaveBeenNthCalledWith(1, 1);
+    expect(moveToUnviewedFile).toHaveBeenNthCalledWith(2, -1);
     expect(
       menus.agent
         .filter((entry): entry is Extract<MenuEntry, { kind: "item" }> => entry.kind === "item")

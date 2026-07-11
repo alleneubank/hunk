@@ -59,6 +59,8 @@ export interface HunkSessionState {
   liveComments: SessionLiveCommentSummary[];
   reviewNoteCount?: number;
   reviewNotes?: SessionReviewNoteSummary[];
+  viewedFileCount?: number;
+  viewedFilePaths?: string[];
 }
 
 export type HunkSessionRegistration = SessionRegistration<HunkSessionInfo>;
@@ -81,6 +83,11 @@ export interface NavigateToHunkToolInput extends SessionTargetInput {
   side?: DiffSide;
   line?: number;
   commentDirection?: "next" | "prev";
+}
+
+export interface SetViewedToolInput extends SessionTargetInput {
+  filePath: string;
+  viewed: boolean;
 }
 
 export interface ReloadSessionToolInput extends SessionTargetInput {
@@ -148,6 +155,13 @@ export interface NavigatedSelectionResult {
   selectedHunk?: SelectedHunkSummary;
 }
 
+export interface SetViewedResult {
+  filePath: string;
+  viewed: boolean;
+  viewedFileCount: number;
+  totalFileCount: number;
+}
+
 export interface RemovedCommentResult {
   commentId: string;
   removed: boolean;
@@ -202,6 +216,8 @@ export interface SelectedSessionContext {
   selectedHunk: SelectedHunkSummary | null;
   showAgentNotes: boolean;
   liveCommentCount: number;
+  viewedFileCount?: number;
+  viewedFilePaths?: string[];
 }
 
 export interface SessionReview {
@@ -217,6 +233,8 @@ export interface SessionReview {
   liveCommentCount: number;
   reviewNoteCount?: number;
   reviewNotes?: SessionReviewNoteSummary[];
+  viewedFileCount?: number;
+  viewedFilePaths?: string[];
   files: SessionReviewFile[];
 }
 
@@ -224,6 +242,7 @@ export type HunkSessionCommandResult =
   | AppliedCommentResult
   | AppliedCommentBatchResult
   | NavigatedSelectionResult
+  | SetViewedResult
   | RemovedCommentResult
   | ClearedCommentsResult
   | ReloadedSessionResult;
@@ -245,6 +264,7 @@ export type HunkSessionServerMessage =
   | SessionServerMessage<"comment", CommentToolInput>
   | SessionServerMessage<"comment_batch", CommentBatchToolInput>
   | SessionServerMessage<"navigate_to_hunk", NavigateToHunkToolInput>
+  | SessionServerMessage<"set_viewed", SetViewedToolInput>
   | SessionServerMessage<"reload_session", ReloadSessionToolInput>
   | SessionServerMessage<"remove_comment", RemoveCommentToolInput>
   | SessionServerMessage<"clear_comments", ClearCommentsToolInput>;

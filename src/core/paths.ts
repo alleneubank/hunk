@@ -5,6 +5,8 @@ import { dirname, join, resolve } from "node:path";
 export const HUNK_DIR_NAME = ".hunk";
 /** Conventional agent-context sidecar filename inside `.hunk/`. */
 export const AGENT_CONTEXT_FILENAME = "agent-context.json";
+/** Conventional per-repo review-state filename inside `.hunk/`. */
+export const REVIEW_STATE_FILENAME = "review-state.json";
 
 const HUNK_REVIEW_SKILL_RELATIVE_PATH = join("skills", "hunk-review", "SKILL.md");
 

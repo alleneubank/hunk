@@ -18,9 +18,10 @@ If no session exists, ask the user to launch Hunk in their terminal first.
 4. hunk session review --repo . --include-patch --json  # opt into raw diff text only when needed
 5. hunk session context --repo .                        # check current focus when needed
 6. hunk session navigate ...                            # move to the right place
-7. hunk session reload -- <command>                     # swap contents if needed
-8. hunk session comment add ...                         # leave one review note
-9. hunk session comment apply ...                       # apply many agent notes in one stdin batch
+7. hunk session viewed --repo . --file <path>           # mark a file covered
+8. hunk session reload -- <command>                     # swap contents if needed
+9. hunk session comment add ...                         # leave one review note
+10. hunk session comment apply ...                      # apply many agent notes in one stdin batch
 ```
 
 ## Session selection
@@ -73,6 +74,18 @@ hunk session navigate --repo . --prev-comment
 - `--hunk <n>` is 1-based
 - `--new-line` / `--old-line` are 1-based line numbers on that diff side
 - Use either `--next-comment` or `--prev-comment`, not both
+
+### Viewed files
+
+After covering a file, mark it viewed so the user and other agents can track review progress:
+
+```bash
+hunk session viewed --repo . --file src/App.tsx
+hunk session viewed --repo . --file src/App.tsx --unset
+```
+
+Use `--unset` when the file needs another pass. JSON session snapshots expose
+`viewedFileCount` and `viewedFilePaths` for choosing the next unviewed file.
 
 ### Reload
 

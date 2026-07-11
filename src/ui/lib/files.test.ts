@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { createTestDiffFile, lines } from "../../../test/helpers/diff-helpers";
-import { buildSidebarEntries, fileLabelParts } from "./files";
+import {
+  buildSidebarEntries,
+  fileLabelParts,
+  sidebarEntryStats,
+  sidebarEntryStatsWidth,
+} from "./files";
 
 describe("files helpers", () => {
   test("buildSidebarEntries hides zero-value sidebar stats", () => {
@@ -115,6 +120,44 @@ describe("files helpers", () => {
       additionsText: "+2",
       deletionsText: "-2",
     });
+  });
+
+  test("buildSidebarEntries marks only viewed file entries", () => {
+    const alpha = createTestDiffFile({ id: "alpha", path: "src/alpha.ts" });
+    const beta = createTestDiffFile({ id: "beta", path: "src/beta.ts" });
+
+    const entries = buildSidebarEntries([alpha, beta], new Set(["beta"])).filter(
+      (entry) => entry.kind === "file",
+    );
+
+    expect(entries).toHaveLength(2);
+    expect(entries[0]).toMatchObject({ id: "alpha", viewed: false });
+    expect(entries[1]).toMatchObject({ id: "beta", viewed: true });
+  });
+
+  test("sidebar stats place viewed progress before comments and line churn", () => {
+    const [entry] = buildSidebarEntries(
+      [
+        createTestDiffFile({
+          id: "viewed",
+          path: "src/viewed.ts",
+          agent: {
+            path: "src/viewed.ts",
+            annotations: [{ summary: "Review note", newRange: [1, 1] }],
+          },
+        }),
+      ],
+      new Set(["viewed"]),
+    ).filter((item) => item.kind === "file");
+
+    expect(entry).toBeDefined();
+    expect(sidebarEntryStats(entry!)).toEqual([
+      { kind: "viewed", text: "✓" },
+      { kind: "agent-comment", text: "*1" },
+      { kind: "addition", text: "+2" },
+      { kind: "deletion", text: "-2" },
+    ]);
+    expect(sidebarEntryStatsWidth(entry!)).toBe("✓ *1 +2 -2".length);
   });
 
   test("fileLabelParts strips parser-added line endings from rename labels", () => {

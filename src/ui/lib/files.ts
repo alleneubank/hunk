@@ -8,6 +8,8 @@ export interface FileListEntry {
   kind: "file";
   id: string;
   name: string;
+  /** Whether this file is viewed; builder-produced entries always include the flag. */
+  viewed?: boolean;
   agentCommentsText: string | null;
   additionsText: string | null;
   deletionsText: string | null;
@@ -22,6 +24,8 @@ export interface FileGroupEntry {
 }
 
 export type SidebarEntry = FileListEntry | FileGroupEntry;
+
+const EMPTY_VIEWED_FILE_IDS: ReadonlySet<string> = new Set();
 
 /** Build the filename-first label shown inside one sidebar row. */
 function sidebarFileName(file: DiffFile) {
@@ -45,12 +49,19 @@ function formatSidebarStat(prefix: "+" | "-", value: number, truncated = false) 
 }
 
 /** Build the visible stats badges for one sidebar row.
- * Keep the agent-note badge first so it reads as review context before line churn.
+ * Keep review progress before review context and line churn.
  */
 export function sidebarEntryStats(
-  entry: Pick<FileListEntry, "agentCommentsText" | "additionsText" | "deletionsText">,
+  entry: Pick<FileListEntry, "viewed" | "agentCommentsText" | "additionsText" | "deletionsText">,
 ) {
-  const stats: Array<{ kind: "agent-comment" | "addition" | "deletion"; text: string }> = [];
+  const stats: Array<{
+    kind: "viewed" | "agent-comment" | "addition" | "deletion";
+    text: string;
+  }> = [];
+
+  if (entry.viewed) {
+    stats.push({ kind: "viewed", text: "✓" });
+  }
 
   if (entry.agentCommentsText) {
     stats.push({ kind: "agent-comment", text: entry.agentCommentsText });
@@ -69,7 +80,7 @@ export function sidebarEntryStats(
 
 /** Measure the rendered sidebar stats width, including the space between badges. */
 export function sidebarEntryStatsWidth(
-  entry: Pick<FileListEntry, "agentCommentsText" | "additionsText" | "deletionsText">,
+  entry: Pick<FileListEntry, "viewed" | "agentCommentsText" | "additionsText" | "deletionsText">,
 ) {
   return sidebarEntryStats(entry).reduce(
     (width, stat, index) => width + stat.text.length + (index > 0 ? 1 : 0),
@@ -120,7 +131,10 @@ export function filterReviewFiles(files: DiffFile[], query: string): DiffFile[] 
 }
 
 /** Build the grouped sidebar entries while preserving the review stream order. */
-export function buildSidebarEntries(files: DiffFile[]): SidebarEntry[] {
+export function buildSidebarEntries(
+  files: DiffFile[],
+  viewedFileIds: ReadonlySet<string> = EMPTY_VIEWED_FILE_IDS,
+): SidebarEntry[] {
   const entries: SidebarEntry[] = [];
   let activeGroup: string | null = null;
 
@@ -146,6 +160,7 @@ export function buildSidebarEntries(files: DiffFile[]): SidebarEntry[] {
       kind: "file",
       id: file.id,
       name: sidebarFileName(file),
+      viewed: viewedFileIds.has(file.id),
       agentCommentsText: agentCommentCount > 0 ? `*${agentCommentCount}` : null,
       additionsText: formatSidebarStat("+", file.stats.additions, file.statsTruncated),
       deletionsText: formatSidebarStat("-", file.stats.deletions),

@@ -28,6 +28,8 @@ export interface BuildReviewStateOptions {
   filterQuery: string;
   selectedFileId: string;
   selectedHunkIndex: number;
+  /** File ids marked as reviewed in the current changeset. */
+  viewedFileIds: ReadonlySet<string>;
 }
 
 export interface ReviewState {
@@ -53,6 +55,7 @@ export function buildReviewState({
   filterQuery,
   selectedFileId,
   selectedHunkIndex,
+  viewedFileIds,
 }: BuildReviewStateOptions): ReviewState {
   const allFiles = mergeFileAnnotationsByFileId(files, liveCommentsByFileId);
   const visibleFiles = filterReviewFiles(allFiles, filterQuery);
@@ -61,7 +64,7 @@ export function buildReviewState({
   return {
     allFiles,
     visibleFiles,
-    sidebarEntries: buildSidebarEntries(visibleFiles),
+    sidebarEntries: buildSidebarEntries(visibleFiles, viewedFileIds),
     selectedFile,
     selectedHunk: selectedFile?.metadata.hunks[selectedHunkIndex],
     hunkCursors: buildHunkCursors(visibleFiles),
@@ -110,6 +113,47 @@ export function findNextAnnotatedFile(
   const normalizedIndex = currentIndex >= 0 ? currentIndex : 0;
   const nextIndex = (normalizedIndex + delta + annotatedFiles.length) % annotatedFiles.length;
   return annotatedFiles[nextIndex] ?? null;
+}
+
+/** Find the next or previous unviewed file in the current visible review stream. */
+export function findNextUnviewedFile(
+  visibleFiles: DiffFile[],
+  viewedFileIds: ReadonlySet<string>,
+  currentFileId: string | undefined,
+  delta: number,
+): DiffFile | null {
+  const unviewedFiles = visibleFiles.filter((file) => !viewedFileIds.has(file.id));
+  if (unviewedFiles.length === 0) {
+    return null;
+  }
+
+  const currentUnviewedIndex = unviewedFiles.findIndex((file) => file.id === currentFileId);
+  if (currentUnviewedIndex >= 0) {
+    const nextIndex =
+      (((currentUnviewedIndex + delta) % unviewedFiles.length) + unviewedFiles.length) %
+      unviewedFiles.length;
+    return unviewedFiles[nextIndex] ?? null;
+  }
+
+  const currentVisibleIndex = visibleFiles.findIndex((file) => file.id === currentFileId);
+  if (currentVisibleIndex < 0) {
+    return unviewedFiles[0] ?? null;
+  }
+
+  // When the current file is viewed, search outward in the requested direction
+  // so navigation stays anchored to its position in the full visible stream.
+  const direction = delta < 0 ? -1 : 1;
+  for (let offset = 1; offset <= visibleFiles.length; offset += 1) {
+    const candidateIndex =
+      (((currentVisibleIndex + direction * offset) % visibleFiles.length) + visibleFiles.length) %
+      visibleFiles.length;
+    const candidate = visibleFiles[candidateIndex];
+    if (candidate && !viewedFileIds.has(candidate.id)) {
+      return candidate;
+    }
+  }
+
+  return null;
 }
 
 /** Resolve one session-daemon navigation request against the review stream's current state. */

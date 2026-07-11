@@ -20,10 +20,13 @@ const { AppHost } = await import("../AppHost");
 const { buildSidebarEntries } = await import("../lib/files");
 const { HelpDialog } = await import("./chrome/HelpDialog");
 const { SidebarPane } = await import("./panes/SidebarPane");
+const { FileListItem } = await import("./panes/FileListItem");
 const { AgentCard } = await import("./panes/AgentCard");
 const { AgentInlineNote } = await import("./panes/AgentInlineNote");
 const { DiffPane } = await import("./panes/DiffPane");
+const { MenuBar } = await import("./chrome/MenuBar");
 const { MenuDropdown } = await import("./chrome/MenuDropdown");
+const { buildMenuSpecs } = await import("./chrome/menu");
 const { StatusBar } = await import("./chrome/StatusBar");
 const { DiffFileHeaderRow } = await import("./panes/DiffFileHeaderRow");
 const { PierreDiffView } = await import("../diff/PierreDiffView");
@@ -373,6 +376,25 @@ function frameHasHighlightedMarker(
   });
 }
 
+/** Return whether a rendered text span uses the expected foreground color. */
+function hasTextWithForeground(
+  frame: {
+    lines: Array<{
+      spans: Array<{ text: string; fg?: { buffer?: ArrayLike<number> } }>;
+    }>;
+  },
+  text: string,
+  foregroundColor: string,
+) {
+  return frame.lines.some((line) =>
+    line.spans.some(
+      (span) =>
+        span.text.includes(text) &&
+        capturedTestColorToHex(span.fg)?.toLowerCase() === foregroundColor.toLowerCase(),
+    ),
+  );
+}
+
 /** Measure the rendered background contrast between one word-diff span and its surrounding line. */
 function renderedWordDiffBackgroundDistance(
   frame: { lines: Array<{ spans: Array<{ text: string; bg?: { buffer?: ArrayLike<number> } }> }> },
@@ -397,6 +419,68 @@ function renderedWordDiffBackgroundDistance(
 }
 
 describe("UI components", () => {
+  test("FileListItem marks and dims viewed files without changing plain files", async () => {
+    const theme = resolveTheme("github-dark-default", null);
+    const file = {
+      ...createTestDiffFile(
+        "viewed",
+        "viewed.ts",
+        "export const viewed = false;\n",
+        "export const viewed = true;\n",
+      ),
+      stats: { additions: 0, deletions: 0 },
+    };
+    const viewedEntry = buildSidebarEntries([file], new Set([file.id])).find(
+      (entry) => entry.kind === "file",
+    );
+    const plainEntry = buildSidebarEntries([file]).find((entry) => entry.kind === "file");
+    if (!viewedEntry || !plainEntry) {
+      throw new Error("Expected file sidebar entries for viewed-state component coverage.");
+    }
+
+    const viewedSetup = await testRender(
+      <FileListItem
+        entry={viewedEntry}
+        selected={true}
+        statsWidth={1}
+        textWidth={24}
+        theme={theme}
+        onSelectFile={() => {}}
+      />,
+      { width: 28, height: 2 },
+    );
+    const plainSetup = await testRender(
+      <FileListItem
+        entry={plainEntry}
+        selected={false}
+        statsWidth={0}
+        textWidth={24}
+        theme={theme}
+        onSelectFile={() => {}}
+      />,
+      { width: 28, height: 2 },
+    );
+
+    try {
+      await act(async () => {
+        await viewedSetup.renderOnce();
+        await plainSetup.renderOnce();
+      });
+
+      expect(viewedSetup.captureCharFrame()).toContain("✓");
+      expect(hasTextWithForeground(viewedSetup.captureSpans(), "viewed.ts", theme.muted)).toBe(
+        true,
+      );
+      expect(plainSetup.captureCharFrame()).not.toContain("✓");
+      expect(hasTextWithForeground(plainSetup.captureSpans(), "viewed.ts", theme.text)).toBe(true);
+    } finally {
+      await act(async () => {
+        viewedSetup.renderer.destroy();
+        plainSetup.renderer.destroy();
+      });
+    }
+  });
+
   test("SidebarPane renders grouped file rows with indented filenames and right-aligned stats", async () => {
     const theme = resolveTheme("github-dark-default", null);
     const files = [
@@ -2224,6 +2308,58 @@ describe("UI components", () => {
     expect(frame).toContain("m");
   });
 
+  test("MenuBar renders optional viewed progress without changing its single row", async () => {
+    const theme = resolveTheme("github-dark-default", null);
+    const baseProps = {
+      activeMenuId: null,
+      menuSpecs: buildMenuSpecs(),
+      terminalWidth: 90,
+      theme,
+      topTitle: "repo working tree  +12  -4",
+      onHoverMenu: () => {},
+      onToggleMenu: () => {},
+    };
+    const withProgress = await captureFrame(
+      <MenuBar {...baseProps} viewedProgressText="viewed 1/3" />,
+      90,
+      3,
+    );
+    const withoutProgress = await captureFrame(<MenuBar {...baseProps} />, 90, 3);
+    const withEmptyProgress = await captureFrame(
+      <MenuBar {...baseProps} viewedProgressText="" />,
+      90,
+      3,
+    );
+
+    expect(withProgress).toContain("viewed 1/3");
+    expect(withProgress.split("\n").filter((line) => line.trim().length > 0)).toHaveLength(1);
+    expect(withoutProgress).toContain("repo working tree  +12  -4");
+    expect(withoutProgress).not.toContain("viewed");
+    expect(withEmptyProgress).toBe(withoutProgress);
+  });
+
+  test("MenuBar preserves viewed progress by yielding title width on narrow terminals", async () => {
+    const theme = resolveTheme("github-dark-default", null);
+    const frame = await captureFrame(
+      <MenuBar
+        activeMenuId={null}
+        menuSpecs={buildMenuSpecs()}
+        terminalWidth={60}
+        theme={theme}
+        topTitle="abcdefghijklmnopqrstuvwxyz"
+        viewedProgressText="viewed 1/3"
+        onHoverMenu={() => {}}
+        onToggleMenu={() => {}}
+      />,
+      60,
+      3,
+    );
+
+    expect(frame).toContain("abcdefg.");
+    expect(frame).not.toContain("abcdefgh");
+    expect(frame).toContain("viewed 1/3");
+  });
+
   test("MenuDropdown repositions wide menus to stay inside the terminal", async () => {
     const theme = resolveTheme("github-dark-default", null);
     const frame = await captureFrame(
@@ -2269,6 +2405,40 @@ describe("UI components", () => {
 
     expect(frame).toContain("filter:");
     expect(frame).toContain("beta");
+  });
+
+  test("StatusBar renders optional viewed progress on the right", async () => {
+    const theme = resolveTheme("github-dark-default", null);
+    const withProgress = await captureFrame(
+      <StatusBar
+        filter=""
+        filterFocused={false}
+        terminalWidth={60}
+        theme={theme}
+        viewedProgressText="viewed 1/3"
+        onCloseMenu={() => {}}
+        onFilterInput={() => {}}
+        onFilterSubmit={() => {}}
+      />,
+      60,
+      3,
+    );
+    const withoutProgress = await captureFrame(
+      <StatusBar
+        filter=""
+        filterFocused={false}
+        terminalWidth={60}
+        theme={theme}
+        onCloseMenu={() => {}}
+        onFilterInput={() => {}}
+        onFilterSubmit={() => {}}
+      />,
+      60,
+      3,
+    );
+
+    expect(withProgress).toContain("viewed 1/3");
+    expect(withoutProgress).not.toContain("viewed");
   });
 
   test("StatusBar renders a notice when no filter is active", async () => {
@@ -2339,13 +2509,13 @@ describe("UI components", () => {
     const frame = await captureFrame(
       <HelpDialog
         canRefresh={true}
-        terminalHeight={39}
+        terminalHeight={41}
         terminalWidth={76}
         theme={theme}
         onClose={() => {}}
       />,
       76,
-      39,
+      41,
     );
 
     const expectedRows = [
@@ -2356,7 +2526,7 @@ describe("UI components", () => {
       "Space / f       page down (alt: f)",
       "b               page up",
       "Shift+Space     page up (alt)",
-      "d / u           half page down / up",
+      "d               half page down",
       "[ / ]           previous / next hunk",
       ", / .           previous / next file",
       "{ / }           previous / next comment",
@@ -2374,6 +2544,8 @@ describe("UI components", () => {
       "l / w / m / M   lines / wrap / metadata / menu",
       "e               open file in $EDITOR",
       "Review",
+      "v               Toggle viewed for selected file",
+      "> / <           next / previous unviewed file",
       "/               focus file filter",
       "c               create review note",
       "Tab             toggle files/filter focus",

@@ -104,7 +104,9 @@ export const FileListItem = memo(function FileListItem({
         }}
       >
         {icon && <text fg={color}>{icon} </text>}
-        <text fg={theme.text}>{padText(fitText(entry.name, nameWidth), nameWidth)}</text>
+        <text fg={entry.viewed ? theme.muted : theme.text}>
+          {padText(fitText(entry.name, nameWidth), nameWidth)}
+        </text>
         {statsSectionWidth > 0 && (
           <box
             style={{
@@ -123,11 +125,13 @@ export const FileListItem = memo(function FileListItem({
                 {index > 0 && <text fg={selected ? theme.text : theme.muted}> </text>}
                 <text
                   fg={
-                    stat.kind === "agent-comment"
-                      ? theme.noteBorder
-                      : stat.kind === "addition"
-                        ? theme.badgeAdded
-                        : theme.badgeRemoved
+                    stat.kind === "viewed"
+                      ? theme.muted
+                      : stat.kind === "agent-comment"
+                        ? theme.noteBorder
+                        : stat.kind === "addition"
+                          ? theme.badgeAdded
+                          : theme.badgeRemoved
                   }
                 >
                   {stat.text}
