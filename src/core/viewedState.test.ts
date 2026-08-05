@@ -5,9 +5,10 @@ import { join } from "node:path";
 import {
   buildNextViewedState,
   hashPatch,
+  mergeViewedPaths,
   readViewedState,
   resolveViewedPaths,
-  writeViewedState,
+  mutateViewedState,
   type ViewedState,
 } from "./viewedState";
 
@@ -51,7 +52,7 @@ describe("viewed state persistence", () => {
       },
     };
 
-    writeViewedState(statePath, state);
+    mutateViewedState(statePath, () => state);
 
     expect(readViewedState(statePath)).toEqual(state);
     expect(readFileSync(statePath, "utf8")).toContain('"version": 1');
@@ -83,13 +84,18 @@ describe("viewed state persistence", () => {
     }
   });
 
-  test("tolerates write failures", () => {
+  test("reports write failures instead of throwing", () => {
     const blockingFile = join(createTempDir(), "not-a-directory");
     writeFileSync(blockingFile, "occupied");
 
-    expect(() =>
-      writeViewedState(join(blockingFile, "review-state.json"), EMPTY_VIEWED_STATE),
-    ).not.toThrow();
+    // A file where the review directory should be: the write cannot land, and the caller
+    // decides what that means rather than being handed a crash or a false success.
+    const result = mutateViewedState(
+      join(blockingFile, "review-state.json"),
+      () => EMPTY_VIEWED_STATE,
+    );
+
+    expect(result.kind).toBe("unavailable");
   });
 
   test("resolves only known paths whose current patch hash matches", () => {
@@ -200,5 +206,85 @@ describe("viewed state persistence", () => {
       "src/current-expired.ts",
     ]);
     expect(next.files["src/current-expired.ts"]?.viewedAt).toBe(now.toISOString());
+  });
+});
+
+describe("merging one session's viewed toggles onto disk", () => {
+  const files = [
+    { path: "a.ts", patch: "patch-a" },
+    { path: "b.ts", patch: "patch-b" },
+    { path: "c.ts", patch: "patch-c" },
+  ];
+
+  /** Viewed state marking exactly these paths, hashed so it resolves against `files`. */
+  function stateMarking(...paths: string[]): ViewedState {
+    return buildNextViewedState(files, new Set(paths), EMPTY_VIEWED_STATE, new Date());
+  }
+
+  // The clobbering case: a peer marked `b.ts` after this session last read, and this
+  // session's own set — which predates that write — must not un-view it.
+  test("keeps a peer's mark on a file this session never touched", () => {
+    const merged = mergeViewedPaths(
+      files,
+      new Set(["a.ts"]),
+      new Set(["a.ts"]),
+      stateMarking("a.ts", "b.ts"),
+    );
+
+    expect([...merged].sort()).toEqual(["a.ts", "b.ts"]);
+  });
+
+  test("a local un-view wins over the same file's mark on disk", () => {
+    const merged = mergeViewedPaths(
+      files,
+      new Set([]),
+      // Observed as viewed, absent from the session set: the user un-viewed it here.
+      new Set(["a.ts"]),
+      stateMarking("a.ts"),
+    );
+
+    expect([...merged]).toEqual([]);
+  });
+
+  test("a local view wins over the file's absence on disk", () => {
+    const merged = mergeViewedPaths(files, new Set(["c.ts"]), new Set([]), stateMarking("a.ts"));
+
+    expect([...merged].sort()).toEqual(["a.ts", "c.ts"]);
+  });
+
+  // Both writers moved, in opposite directions, on different files. Neither loses.
+  test("merges a local toggle and a peer toggle in one pass", () => {
+    const merged = mergeViewedPaths(
+      files,
+      new Set(["a.ts", "c.ts"]),
+      new Set(["a.ts"]),
+      stateMarking("a.ts", "b.ts"),
+    );
+
+    expect([...merged].sort()).toEqual(["a.ts", "b.ts", "c.ts"]);
+  });
+
+  test("ignores paths that are not part of the current review", () => {
+    const merged = mergeViewedPaths(
+      files,
+      new Set(["a.ts", "gone.ts"]),
+      new Set([]),
+      EMPTY_VIEWED_STATE,
+    );
+
+    expect([...merged]).toEqual(["a.ts"]);
+  });
+
+  // A stale hash means the recorded mark no longer describes this patch, so it is not a
+  // peer's opinion about the file in front of the user.
+  test("does not adopt a disk mark whose patch hash no longer matches", () => {
+    const stale: ViewedState = {
+      version: 1,
+      files: {
+        "b.ts": { patchHash: hashPatch("old-patch-b"), viewedAt: new Date().toISOString() },
+      },
+    };
+
+    expect([...mergeViewedPaths(files, new Set([]), new Set([]), stale)]).toEqual([]);
   });
 });

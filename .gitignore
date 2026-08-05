@@ -44,6 +44,7 @@ tmp
 .hunk/config.toml
 .hunk/agent-context.json
 .hunk/review-state.json
+.hunk/review-comments.json
 .pi/
 autoresearch.jsonl
 autoresearch.ideas.md

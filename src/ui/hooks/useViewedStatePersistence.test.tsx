@@ -8,7 +8,7 @@ import { HUNK_DIR_NAME, REVIEW_STATE_FILENAME } from "../../core/paths";
 import {
   hashPatch,
   readViewedState,
-  writeViewedState,
+  mutateViewedState,
   type ViewedState,
 } from "../../core/viewedState";
 import type { AppBootstrap, DiffFile } from "../../core/types";
@@ -209,7 +209,7 @@ describe("useViewedStatePersistence", () => {
   test("rehydrates matching persisted paths as current file ids on mount", async () => {
     const repoRoot = createRepoRoot();
     const alpha = createFile("load:0:alpha", "src/alpha.ts", "alpha patch");
-    writeViewedState(statePath(repoRoot), {
+    mutateViewedState(statePath(repoRoot), () => ({
       version: 1,
       files: {
         [alpha.path]: {
@@ -221,7 +221,7 @@ describe("useViewedStatePersistence", () => {
           viewedAt: "2026-07-10T12:00:00.000Z",
         },
       },
-    });
+    }));
     const { handleRef, replaceCalls, setup } = await renderPersistence(repoRoot, [alpha]);
 
     try {
@@ -239,7 +239,7 @@ describe("useViewedStatePersistence", () => {
     const repoRoot = createRepoRoot();
     const alpha = createFile("load:0:alpha", "src/alpha.ts", "alpha patch");
     const beta = createFile("load:1:beta", "src/beta.ts", "beta patch");
-    writeViewedState(statePath(repoRoot), {
+    mutateViewedState(statePath(repoRoot), () => ({
       version: 1,
       files: {
         [alpha.path]: {
@@ -251,7 +251,7 @@ describe("useViewedStatePersistence", () => {
           viewedAt: "2026-07-10T12:00:00.000Z",
         },
       },
-    });
+    }));
     const { handleRef, replaceCalls, setup } = await renderPersistence(repoRoot, [alpha, beta]);
 
     try {
@@ -279,10 +279,10 @@ describe("useViewedStatePersistence", () => {
       patchHash: hashPatch("absent patch"),
       viewedAt: new Date().toISOString(),
     };
-    writeViewedState(statePath(repoRoot), {
+    mutateViewedState(statePath(repoRoot), () => ({
       version: 1,
       files: { "other/absent.ts": absentEntry },
-    });
+    }));
     const { handleRef, setup } = await renderPersistence(repoRoot, [alpha]);
 
     try {
@@ -310,13 +310,79 @@ describe("useViewedStatePersistence", () => {
     }
   });
 
+  // The TUI reads viewed state once and can stay open for hours, so its set goes stale the
+  // moment an editor or agent runs `hunk review viewed set`. The lock serializes the two
+  // writes but cannot stop this one from writing a snapshot that predates the peer's.
+  test("keeps a peer's mark written after mount and adopts it into the UI", async () => {
+    const repoRoot = createRepoRoot();
+    const alpha = createFile("load:0:alpha", "src/alpha.ts", "alpha patch");
+    const beta = createFile("load:1:beta", "src/beta.ts", "beta patch");
+    const { handleRef, setup } = await renderPersistence(repoRoot, [alpha, beta]);
+
+    try {
+      await flush(setup);
+
+      // A peer marks `beta.ts` viewed while this session sits on its startup snapshot.
+      const peerWrite = mutateViewedState(statePath(repoRoot), (previous) => ({
+        version: 1,
+        files: {
+          ...previous.files,
+          [beta.path]: { patchHash: hashPatch(beta.patch), viewedAt: new Date().toISOString() },
+        },
+      }));
+      expect(peerWrite.kind).toBe("written");
+
+      // The user then marks a different file here, which is the write that used to clobber.
+      await act(async () => {
+        expectHandle(handleRef.current).setViewedFileIds(new Set([alpha.id]));
+      });
+      await flush(setup);
+
+      const persisted = readViewedState(statePath(repoRoot));
+      expect(Object.keys(persisted.files).sort()).toEqual([alpha.path, beta.path].sort());
+      // Adopted, so the next render reads the peer's mark as already-known rather than as a
+      // local un-view that would undo it.
+      expect(expectHandle(handleRef.current).viewedFileIds).toEqual(new Set([alpha.id, beta.id]));
+    } finally {
+      await act(async () => setup.renderer.destroy());
+    }
+  });
+
+  // The mirror case: deferring to disk must not make a deliberate un-view unwritable.
+  test("a local un-view still wins over the mark on disk", async () => {
+    const repoRoot = createRepoRoot();
+    const alpha = createFile("load:0:alpha", "src/alpha.ts", "alpha patch");
+    mutateViewedState(statePath(repoRoot), () => ({
+      version: 1,
+      files: {
+        [alpha.path]: { patchHash: hashPatch(alpha.patch), viewedAt: "2026-07-10T12:00:00.000Z" },
+      },
+    }));
+    const { handleRef, setup } = await renderPersistence(repoRoot, [alpha]);
+
+    try {
+      await flush(setup);
+      expect(expectHandle(handleRef.current).viewedFileIds).toEqual(new Set([alpha.id]));
+
+      await act(async () => {
+        expectHandle(handleRef.current).setViewedFileIds(new Set());
+      });
+      await flush(setup);
+
+      expect(readViewedState(statePath(repoRoot)).files[alpha.path]).toBeUndefined();
+      expect(expectHandle(handleRef.current).viewedFileIds).toEqual(new Set());
+    } finally {
+      await act(async () => setup.renderer.destroy());
+    }
+  });
+
   test("switches persistence stores when a soft reload changes the repo root", async () => {
     const oldRepoRoot = createRepoRoot();
     const newRepoRoot = createRepoRoot();
     const oldFile = createFile("old:0:alpha", "src/alpha.ts", "old alpha patch");
     const rehydratedFile = createFile("new:0:beta", "src/beta.ts", "new beta patch");
     const newlyViewedFile = createFile("new:1:gamma", "src/gamma.ts", "new gamma patch");
-    writeViewedState(statePath(newRepoRoot), {
+    mutateViewedState(statePath(newRepoRoot), () => ({
       version: 1,
       files: {
         [rehydratedFile.path]: {
@@ -324,7 +390,7 @@ describe("useViewedStatePersistence", () => {
           viewedAt: "2026-07-10T12:00:00.000Z",
         },
       },
-    });
+    }));
     const { handleRef, replaceCalls, setup } = await renderPersistence(oldRepoRoot, [oldFile]);
 
     try {
