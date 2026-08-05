@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.18.0-beta.1
+
+### Minor Changes
+
+- 2f18b9d: Auto-discover `.hunk/agent-context.json` so agent review notes appear in `hunk diff`
+  with no flags. Adds an `agent_context` config key (path resolved against the repo root)
+  and a `--no-agent-context` opt-out, shows agent notes by default when a sidecar loads,
+  and keeps hunk's own `.hunk/` metadata out of untracked working-tree review noise.
+- 67a063a: Agent notes can be answered and marked resolved: `hunk review note reply` and `note status` open a conversation beside the note, which the VS Code extension renders as one thread.
+- 67a063a: Add `hunk review focus`, letting an agent point a paired reviewer at a changeset, file, and line that the VS Code extension follows.
+- 67a063a: `hunk review export` now carries the agent sidecar's changeset summary and per-file
+  summaries alongside hunk notes, and `hunk review viewed set` accepts `--file` more than once
+  so a client can mark many files viewed in one write. A review flag repeated where only one
+  value is meaningful is now an error instead of silently keeping the last.
+- 67a063a: Add the `hunk review` command group: a headless JSON surface for editor clients. `review
+export` emits a changeset snapshot with no daemon, session, or TTY, reusing the same
+  projection `hunk session review` serves; `review comment add/status/delete` and `review
+viewed set` write review state through Hunk's own anchoring and strict-preserve store; and
+  `review file source` reads one side of a file through the VCS backend that loaded it.
+  Review comments persist to `.hunk/review-comments.json`, separate from viewed state, and
+  re-anchor to the code they were written against as the diff changes.
+- ac30ff7: Add GitHub-PR-style per-file viewed state. Press `v` to toggle the selected file with a
+  sidebar `✓`, use `>` / `<` to jump between unviewed files, and follow `viewed n/m` progress
+  in the menu bar. Repo-backed reviews persist progress in `.hunk/review-state.json` and
+  automatically unview files whose diffs change. Agents can update viewed state with
+  `hunk session viewed` and read viewed fields from daemon v5 session snapshots.
+- 67a063a: Add `hunk review comment reply`, so review comments hold a conversation: replies thread onto the comment they answer, and resolving one is reversible.
+- 67a063a: Session and review payloads now report each file's `changeType`, so a client can tell an
+  added, deleted, or renamed file from a modified one without guessing from line counts.
+
+### Patch Changes
+
+- 0788369: Mark a review comment outdated instead of moving it to an unrelated line that happens to share its text, such as a lone surviving `}`.
+- 67a063a: Fix headless commands silently truncating output larger than one pipe buffer. `hunk pager`,
+  `hunk session`, and `hunk review` exited as soon as they had queued their payload, so
+  anything past the first 64 KiB was dropped while the command still exited `0`.
+
 ## 0.18.0-beta.0
 
 ### Minor Changes
