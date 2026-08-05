@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { useEffect, useMemo, useRef } from "react";
+import { useLayoutEffect, useMemo, useRef } from "react";
 import { HUNK_DIR_NAME, REVIEW_STATE_FILENAME } from "../../core/paths";
 import {
   buildNextViewedState,
@@ -39,7 +39,11 @@ export function useViewedStatePersistence({
   const pendingRehydrationRef = useRef<ReadonlySet<string> | null>(null);
   const activeFilePathRef = useRef<string | null>(null);
 
-  useEffect(() => {
+  // Layout, like the write below it. These two are one protocol — this one rehydrates from disk
+  // and arms `pendingRehydrationRef`, the next reads that flag — so they have to run in
+  // declaration order. Leaving this passive while the write is layout inverts them, because every
+  // layout effect runs before any passive one.
+  useLayoutEffect(() => {
     if (activeFilePathRef.current !== filePath) {
       // A soft reload can reuse this hook for another repo, so discard every old-store snapshot
       // before rehydrating or allowing writes against the new persistence path.
@@ -63,7 +67,12 @@ export function useViewedStatePersistence({
     replaceViewedFileIds(nextViewedFileIds);
   }, [filePath, files, replaceViewedFileIds]);
 
-  useEffect(() => {
+  // Layout, not passive: the write has to land before the renderer flushes the new `viewed n/m`
+  // to the terminal. A passive effect runs after that flush, so the UI would be telling the user
+  // their progress was recorded while the file was still being written — the one ordering
+  // BRIEF.md's durability floor forbids. The window was ~1ms before viewed writes moved behind
+  // the review lock and ~53ms after, measured on linux/amd64, which is what made it observable.
+  useLayoutEffect(() => {
     if (!filePath || activeFilePathRef.current !== filePath) {
       return;
     }
