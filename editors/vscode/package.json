@@ -1,19 +1,26 @@
 {
   "name": "hunk-vscode",
   "displayName": "Hunk Review",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "description": "Local PR review in VS Code, backed by Hunk's changeset model and agent notes.",
   "categories": [
     "SCM Providers"
   ],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/alleneubank/hunk.git",
+    "directory": "editors/vscode"
+  },
   "publisher": "hunk",
   "main": "./out/extension.js",
   "scripts": {
     "compile": "tsc -p ./",
     "typecheck": "tsc -p ./ --noEmit",
-    "test": "tsc -p ./ && vscode-test"
+    "test": "tsc -p ./ && vscode-test",
+    "package": "vsce package --no-dependencies --allow-missing-repository",
+    "vscode:prepublish": "tsc -p ./"
   },
   "devDependencies": {
     "@types/mocha": "^10.0.10",

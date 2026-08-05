@@ -53,6 +53,8 @@ result
 # vscode extension package build + downloaded test editor
 editors/vscode/out
 editors/vscode/.vscode-test
+# `vsce package` output — built on demand, never committed.
+editors/vscode/*.vsix
 # The end-to-end suite turns the fixture workspace into a real repo for the run.
 editors/vscode/fixtures/workspace/.git
 editors/vscode/fixtures/workspace/.hunk

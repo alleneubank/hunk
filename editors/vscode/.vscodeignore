@@ -1,0 +1,23 @@
+# Everything the extension does not need at runtime. `main` is ./out/extension.js,
+# so only the compiled output, the manifest, and the docs ship.
+#
+# .vscode-test alone is ~1.8 GB of downloaded editor; without this file `vsce`
+# would try to put it in the .vsix.
+.vscode-test/**
+.vscode-test.mjs
+node_modules/**
+
+# Sources and their maps: the compiled JS in out/ is what runs, and shipping the
+# TypeScript beside it doubles the package for no one's benefit.
+src/**
+**/*.ts
+**/*.map
+tsconfig.json
+
+# Test-only assets. `fixtures/workspace` is a scratch repo the end-to-end suite
+# git-inits during a run.
+out/test/**
+fixtures/**
+
+.gitignore
+.vscodeignore
