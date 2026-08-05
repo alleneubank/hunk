@@ -42,7 +42,7 @@ import { selectGapForKeyboardToggle } from "../diff/expandCollapsedRows";
 import { trailingCollapsedLines } from "../diff/pierre";
 import { findNextHunkCursor } from "../lib/hunks";
 import { agentNoteMarkupWidth } from "../lib/agentNoteGeometry";
-import { reviewNoteSource } from "../lib/agentAnnotations";
+import { buildSidecarReviewNotes } from "../../session/app/reviewNotes";
 import { STML_REFERENCE_WIDTH, validateStmlMarkup } from "../lib/stml/layout";
 import {
   buildReviewState,
@@ -1059,29 +1059,17 @@ export function useReviewController({
 
   /** Format current inline notes for daemon snapshots without exposing UI-only objects. */
   const reviewNoteSummaries = useMemo<SessionReviewNoteSummary[]>(() => {
-    const noteSummaries: SessionReviewNoteSummary[] = [];
+    // Sidecar notes come from the shared projection the headless export also uses, so a
+    // note keeps the same id, range, and body whichever surface reports it.
+    const noteSummaries: SessionReviewNoteSummary[] = buildSidecarReviewNotes(files);
 
     files.forEach((file) => {
-      (file.agent?.annotations ?? []).forEach((annotation, index) => {
-        const source = reviewNoteSource(annotation);
-        noteSummaries.push({
-          noteId: annotation.id ?? `${source}:${file.id}:${index}`,
-          source,
-          filePath: file.path,
-          oldRange: annotation.oldRange,
-          newRange: annotation.newRange,
-          body: [annotation.summary, annotation.rationale].filter(Boolean).join("\n\n"),
-          title: annotation.title,
-          author: annotation.author,
-          createdAt: annotation.createdAt ?? "1970-01-01T00:00:00.000Z",
-          updatedAt: annotation.updatedAt,
-          editable: false,
-        });
-      });
-
       (liveCommentsByFileId[file.id] ?? []).forEach((comment) => {
         noteSummaries.push({
           noteId: comment.id,
+          // Live comments carry their own durable id, so their key is that id rather than a
+          // content hash: nothing about them is positional to begin with.
+          noteKey: comment.id,
           source: "agent",
           filePath: file.path,
           hunkIndex: comment.hunkIndex,
@@ -1097,6 +1085,7 @@ export function useReviewController({
       (userNotesByFileId[file.id] ?? []).forEach((note) => {
         noteSummaries.push({
           noteId: note.id,
+          noteKey: note.id,
           source: "user",
           filePath: file.path,
           hunkIndex: note.hunkIndex,

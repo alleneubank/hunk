@@ -4,7 +4,6 @@ import {
   type ScrollBoxRenderable,
 } from "@opentui/core";
 import { useRenderer, useTerminalDimensions } from "@opentui/react";
-import { isAbsolute } from "node:path";
 import { Fragment, Suspense, lazy, useCallback, useEffect, useMemo, useState, useRef } from "react";
 import {
   diffPersistedViewPreferences,
@@ -12,6 +11,7 @@ import {
   saveViewPreferencesPromptPreference,
 } from "../core/config";
 import { experimentalFeatureEnabled, resolveExperimentalDiffFiles } from "../core/experimental";
+import { resolveReviewStoreRepoRoot } from "../core/reviewStore";
 import { DEFAULT_TAB_WIDTH } from "../core/tabWidth";
 import type {
   AppBootstrap,
@@ -203,20 +203,7 @@ export function App({
     () => resolveExperimentalDiffFiles(bootstrap.changeset.files, bootstrap.input.options),
     [bootstrap.changeset.files, bootstrap.input.options.experimental],
   );
-  const viewedStateRepoRoot = useMemo(() => {
-    const repoBackedInput =
-      bootstrap.input.kind === "vcs" ||
-      bootstrap.input.kind === "show" ||
-      bootstrap.input.kind === "stash-show";
-
-    // VCS loaders set sourceLabel to the canonical root. Re-derive it because daemon soft reloads
-    // replace bootstrap with resetApp:false and must never retain the previous review's root.
-    return repoBackedInput &&
-      !bootstrap.input.options.pager &&
-      isAbsolute(bootstrap.changeset.sourceLabel)
-      ? bootstrap.changeset.sourceLabel
-      : null;
-  }, [bootstrap]);
+  const viewedStateRepoRoot = useMemo(() => resolveReviewStoreRepoRoot(bootstrap), [bootstrap]);
   const renderer = useRenderer();
   const terminal = useTerminalDimensions();
   const diffScrollRef = useRef<ScrollBoxRenderable | null>(null);

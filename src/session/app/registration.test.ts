@@ -59,6 +59,9 @@ describe("session registration", () => {
             previousPath: "src/old-example.ts",
             additions: 1,
             deletions: 1,
+            // Carried from the file's own metadata: a client picks which document to open
+            // from it, so an absent value makes a deleted file look editable.
+            changeType: "change",
             hunkCount: 1,
             patch: "@@ -1 +1 @@\n-export const value = 1;\n+export const value = 2;\n",
           },
@@ -72,6 +75,30 @@ describe("session registration", () => {
       oldRange: [1, 1],
       newRange: [1, 1],
     });
+  });
+
+  // A client opens a file's "new" side as a workspace document unless the file is deleted,
+  // so this value decides which document it opens. Asserted against a non-default type
+  // because the shared fixture is always `change`, which a hardcoded value would also pass.
+  test("createSessionRegistration carries each file's own change type", () => {
+    const file = createTestDiffFile({
+      id: "file-1",
+      path: "src/gone.ts",
+      before: "one\n",
+      after: "",
+    });
+    const registration = createSessionRegistration(
+      createBootstrap({
+        changeset: {
+          id: "changeset-1",
+          title: "working tree",
+          sourceLabel: "/repo",
+          files: [{ ...file, metadata: { ...file.metadata, type: "deleted" } }],
+        },
+      }),
+    );
+
+    expect(registration.info.files[0]?.changeType).toBe("deleted");
   });
 
   // Intent: reloads refresh review metadata without changing the live session identity.

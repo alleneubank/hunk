@@ -3,9 +3,11 @@ import { useEffect, useMemo, useRef } from "react";
 import { HUNK_DIR_NAME, REVIEW_STATE_FILENAME } from "../../core/paths";
 import {
   buildNextViewedState,
+  mergeViewedPaths,
+  mutateViewedState,
   readViewedState,
   resolveViewedPaths,
-  writeViewedState,
+  viewedStatesEqual,
   type ViewedState,
 } from "../../core/viewedState";
 import type { DiffFile } from "../../core/types";
@@ -20,23 +22,6 @@ interface ViewedStatePersistenceOptions {
 /** Return whether two sets contain exactly the same values. */
 function setsEqual(left: ReadonlySet<string>, right: ReadonlySet<string>): boolean {
   return left.size === right.size && [...left].every((value) => right.has(value));
-}
-
-/** Return whether two viewed-state snapshots contain the same path entries. */
-function viewedStatesEqual(left: ViewedState, right: ViewedState): boolean {
-  const leftPaths = Object.keys(left.files);
-  const rightPaths = Object.keys(right.files);
-  return (
-    leftPaths.length === rightPaths.length &&
-    leftPaths.every((path) => {
-      const leftEntry = left.files[path];
-      const rightEntry = right.files[path];
-      return (
-        leftEntry?.patchHash === rightEntry?.patchHash &&
-        leftEntry?.viewedAt === rightEntry?.viewedAt
-      );
-    })
-  );
 }
 
 /** Rehydrate and best-effort persist per-file viewed progress for one repo-backed review. */
@@ -91,16 +76,56 @@ export function useViewedStatePersistence({
       return;
     }
 
-    const previous = previousStateRef.current ?? readViewedState(filePath);
+    const now = new Date();
     const viewedPaths = new Set(
       files.filter((file) => viewedFileIds.has(file.id)).map((file) => file.path),
     );
-    const next = buildNextViewedState(files, viewedPaths, previous, new Date());
-    if (viewedStatesEqual(previous, next)) {
+    // Cheap pre-check, only to avoid taking the lock on every render: when this session's
+    // set still matches what it last observed, it has nothing new to say and any peer write
+    // is none of its business.
+    const cached = previousStateRef.current;
+    if (
+      cached &&
+      viewedStatesEqual(cached, buildNextViewedState(files, viewedPaths, cached, now))
+    ) {
       return;
     }
 
-    writeViewedState(filePath, next);
-    previousStateRef.current = next;
-  }, [filePath, files, viewedFileIds]);
+    let mergedPaths: ReadonlySet<string> | null = null;
+
+    // Deliberately unchecked: review progress is best-effort metadata, and an unwritable or
+    // contended sidecar must not interrupt the review. The headless command checks the same
+    // result.
+    const write = mutateViewedState(filePath, (previous) => {
+      // No cached snapshot means the last write failed and this session cannot tell which
+      // flags a peer moved. Falling back to the locked read makes every difference read as a
+      // local toggle, so the user's own pending change still lands.
+      const observed = previousStateRef.current ?? previous;
+      mergedPaths = mergeViewedPaths(
+        files,
+        viewedPaths,
+        new Set(resolveViewedPaths(files, observed)),
+        previous,
+      );
+
+      return buildNextViewedState(files, mergedPaths, previous, now);
+    });
+
+    previousStateRef.current = write.kind === "written" ? write.state : null;
+
+    if (write.kind !== "written" || !mergedPaths) {
+      return;
+    }
+
+    // Adopt whatever the merge kept, so the UI shows the peer's marks and the next render
+    // does not read them back as a local toggle undoing them.
+    const merged: ReadonlySet<string> = mergedPaths;
+    const mergedFileIds = new Set(
+      files.filter((file) => merged.has(file.path)).map((file) => file.id),
+    );
+    if (!setsEqual(mergedFileIds, viewedFileIds)) {
+      pendingRehydrationRef.current = mergedFileIds;
+      replaceViewedFileIds(mergedFileIds);
+    }
+  }, [filePath, files, viewedFileIds, replaceViewedFileIds]);
 }

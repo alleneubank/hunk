@@ -22,6 +22,7 @@ import type {
   CliInput,
   MarkupRenderCommandInput,
   ParsedCliInput,
+  ReviewCommandInput,
   SessionCommandInput,
 } from "../core/types";
 import { canReloadInput } from "../core/watch";
@@ -59,6 +60,10 @@ export type StartupPlan =
     }
   | {
       kind: "markup-guide";
+    }
+  | {
+      kind: "review-command";
+      input: ReviewCommandInput;
     }
   | {
       kind: "app";
@@ -148,6 +153,15 @@ export async function prepareStartupPlan(
   if (parsedCliInput.kind === "markup-guide") {
     return {
       kind: "markup-guide",
+    };
+  }
+
+  // Passed through rather than loaded here: the export owns its own cwd (`--repo`) and must
+  // never touch the terminal, theme probing, or controlling-TTY setup this function performs.
+  if (parsedCliInput.kind === "review") {
+    return {
+      kind: "review-command",
+      input: parsedCliInput,
     };
   }
 

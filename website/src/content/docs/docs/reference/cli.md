@@ -162,6 +162,50 @@ print the experimental STML authoring guide
 hunk markup guide
 ```
 
+## `hunk review`
+
+drive a repo-local review headlessly, for an editor client
+
+### Usage
+
+```bash
+hunk review export [target] [-- <pathspec...>] --json
+hunk review comment add --file <path> --side <old|new> --line <n> --body <text> --json
+hunk review comment reply --file <path> --id <id> --body <text> --json
+hunk review comment status --file <path> --id <id> --status <active|resolved> --json
+hunk review comment delete --file <path> --id <id> --json
+hunk review note reply --file <path> --note <id> --body <text> --json
+hunk review note status --file <path> --note <id> --status <active|resolved> --json
+hunk review viewed set --file <path> [--file <path>...] (--viewed | --unviewed) --json
+hunk review file source --file <path> --side <old|new> --json
+hunk review focus set [target] [--file <path> [--side <old|new>] [--line <n>]] --json
+hunk review focus get --json
+hunk review focus clear --json
+```
+
+### Command-specific options
+
+| Option                   | Description                                                                                            |
+| ------------------------ | ------------------------------------------------------------------------------------------------------ |
+| `--staged`               | show staged changes instead of the working tree                                                        |
+| `--cached`               | alias for --staged                                                                                     |
+| `--exclude-untracked`    | exclude untracked files from working tree reviews                                                      |
+| `--no-exclude-untracked` | include untracked files in working tree reviews Compatibility inverse; omitted from `--help`.          |
+| `--json`                 | emit structured JSON (the only supported format)                                                       |
+| `--include-patch`        | export: include raw unified patch text per file                                                        |
+| `--repo <path>`          | repo root to operate on instead of the current directory                                               |
+| `--file <path>`          | repo-relative file the operation targets; repeatable for `viewed set`, which applies them in one write |
+| `--side <side>`          | comment add / file source: `old` or `new` diff side                                                    |
+| `--line <n>`             | comment add: line number on that side                                                                  |
+| `--body <text>`          | comment add/reply: comment body                                                                        |
+| `--stdin`                | comment add/reply: read the body from stdin instead                                                    |
+| `--author <name>`        | comment add/reply: author recorded on the comment                                                      |
+| `--id <id>`              | comment reply/status/delete: the comment id; for `reply`, the comment being answered                   |
+| `--note <id>`            | note reply/status: the agent note id, as the current review reports it                                 |
+| `--status <status>`      | comment status / note status: `active` or `resolved`                                                   |
+| `--viewed`               | viewed set: mark the named files viewed                                                                |
+| `--unviewed`             | viewed set: mark the named files unviewed                                                              |
+
 ## `hunk skill path`
 
 print the bundled Hunk review skill path

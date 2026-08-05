@@ -7,6 +7,22 @@ export const HUNK_DIR_NAME = ".hunk";
 export const AGENT_CONTEXT_FILENAME = "agent-context.json";
 /** Conventional per-repo review-state filename inside `.hunk/`. */
 export const REVIEW_STATE_FILENAME = "review-state.json";
+/**
+ * Conventional per-repo review-comment filename inside `.hunk/`.
+ *
+ * Separate from `REVIEW_STATE_FILENAME` on purpose: viewed state is derived and resets on
+ * any doubt, while comments are authored and are never discarded. One file cannot carry
+ * both policies.
+ */
+export const REVIEW_COMMENTS_FILENAME = "review-comments.json";
+/**
+ * Conventional per-repo review-focus filename inside `.hunk/`.
+ *
+ * Where an agent points its human partner. Derived like `REVIEW_STATE_FILENAME` and unlike
+ * `REVIEW_COMMENTS_FILENAME`: a corrupt focus resets to none, because nothing here is
+ * authored — it says what to look at, never what is true about the code.
+ */
+export const REVIEW_FOCUS_FILENAME = "review-focus.json";
 
 const HUNK_REVIEW_SKILL_RELATIVE_PATH = join("skills", "hunk-review", "SKILL.md");
 
