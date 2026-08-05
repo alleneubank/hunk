@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   createTestSessionLiveComment,
   createTestSessionRegistration,
+  createTestSessionReviewFile,
   createTestSessionSnapshot,
 } from "../../../test/helpers/session-daemon-fixtures";
 import {
@@ -65,6 +66,20 @@ describe("hunk session projections", () => {
     );
   });
 
+  // The projection is what a client actually reads, so dropping the change type here would
+  // undo the registration carrying it. A non-default value, so a hardcoded one fails.
+  test("buildHunkSessionReview carries each file's change type through to the client", () => {
+    const entry = {
+      registration: createTestSessionRegistration({
+        files: [createTestSessionReviewFile({ path: "src/gone.ts", changeType: "deleted" })],
+      }),
+      snapshot: createTestSessionSnapshot(),
+    };
+
+    expect(buildHunkSessionReview(entry).files[0]?.changeType).toBe("deleted");
+    expect(buildListedHunkSession(entry).files[0]?.changeType).toBe("deleted");
+  });
+
   test("buildHunkSessionReview strips patch text by default and includes it on demand", () => {
     const entry = createEntry();
 
@@ -83,6 +98,7 @@ describe("hunk session projections", () => {
         reviewNotes: [
           {
             noteId: "user:1",
+            noteKey: "user:1",
             source: "user",
             filePath: "src/example.ts",
             body: "Please cover this case.",
@@ -131,6 +147,7 @@ describe("hunk session projections", () => {
         reviewNotes: [
           {
             noteId: "user:1",
+            noteKey: "user:1",
             source: "user",
             filePath: "src/example.ts",
             body: "Human note",
@@ -139,6 +156,7 @@ describe("hunk session projections", () => {
           },
           {
             noteId: "agent:1",
+            noteKey: "agent:1",
             source: "agent",
             filePath: "src/other.ts",
             body: "Agent note",

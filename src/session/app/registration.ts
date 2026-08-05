@@ -9,6 +9,7 @@ import {
   resolveSessionTerminalMetadata,
 } from "@hunk/session-broker-core";
 import type { HunkSessionRegistration, HunkSessionSnapshot, SessionReviewFile } from "../types";
+import { buildSidecarReviewNotes } from "./reviewNotes";
 
 /** Resolve the TTY device path for the current process, if available. */
 function ttyname(): string | undefined {
@@ -43,6 +44,8 @@ function buildSessionFiles(bootstrap: AppBootstrap): SessionReviewFile[] {
     additions: file.stats.additions,
     deletions: file.stats.deletions,
     hunkCount: file.metadata.hunks.length,
+    changeType: file.metadata.type,
+    agentSummary: file.agent?.summary,
     patch: file.patch,
     // The same derivation the extension API's file views use, so the two
     // external views of a review never disagree on a hunk's header or spans.
@@ -67,6 +70,7 @@ export function createSessionRegistration(bootstrap: AppBootstrap): HunkSessionR
       title: bootstrap.changeset.title,
       sourceLabel: bootstrap.changeset.sourceLabel,
       experimentalFeatures: resolveExperimentalFeatures(bootstrap.input.options),
+      agentSummary: bootstrap.changeset.agentSummary,
       files: buildSessionFiles(bootstrap),
     },
   };
@@ -86,6 +90,7 @@ export function updateSessionRegistration(
       title: bootstrap.changeset.title,
       sourceLabel: bootstrap.changeset.sourceLabel,
       experimentalFeatures: resolveExperimentalFeatures(bootstrap.input.options),
+      agentSummary: bootstrap.changeset.agentSummary,
       files: buildSessionFiles(bootstrap),
     },
   };
@@ -96,6 +101,7 @@ export function createInitialSessionSnapshot(bootstrap: AppBootstrap): HunkSessi
   const firstFile = bootstrap.changeset.files[0];
   const firstHunk = firstFile?.metadata.hunks[0];
   const firstRange = firstHunk ? hunkLineRange(firstHunk) : null;
+  const sidecarNotes = buildSidecarReviewNotes(bootstrap.changeset.files);
 
   return {
     updatedAt: new Date().toISOString(),
@@ -108,8 +114,10 @@ export function createInitialSessionSnapshot(bootstrap: AppBootstrap): HunkSessi
       showAgentNotes: bootstrap.initialShowAgentNotes ?? false,
       liveCommentCount: 0,
       liveComments: [],
-      reviewNoteCount: 0,
-      reviewNotes: [],
+      // Sidecar notes exist before any UI runs, so a snapshot that reported zero would make
+      // a headless reader believe a reviewed changeset carries no agent rationale at all.
+      reviewNoteCount: sidecarNotes.length,
+      reviewNotes: sidecarNotes,
       viewedFileCount: 0,
       viewedFilePaths: [],
     },

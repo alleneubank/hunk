@@ -110,6 +110,59 @@ describe("hunk session wire parsing", () => {
     });
   });
 
+  // Registrations cross between independently installed binaries, so absence and
+  // malformedness must be treated differently: one is an older peer, the other is a broken
+  // payload that would silently change which document a client opens.
+  test("registration defaults an absent changeType but rejects an invalid one", () => {
+    const parseFile = (file: Record<string, unknown>) =>
+      parseSessionRegistration({
+        registrationVersion: SESSION_BROKER_REGISTRATION_VERSION,
+        sessionId: "session-1",
+        pid: 123,
+        cwd: "/repo",
+        launchedAt: "2026-03-22T00:00:00.000Z",
+        info: {
+          inputKind: "vcs",
+          title: "repo working tree",
+          sourceLabel: "/repo",
+          files: [{ id: "f1", path: "a.ts", additions: 1, deletions: 0, hunks: [], ...file }],
+        },
+      })?.info.files;
+
+    expect(parseFile({})?.[0]?.changeType).toBe("change");
+    expect(parseFile({ changeType: "deleted" })?.[0]?.changeType).toBe("deleted");
+    // Not coerced: an unknown value fails validation like any other malformed field, which
+    // rejects the registration rather than admitting a file whose change kind is a guess.
+    expect(parseFile({ changeType: "removed" })).toBeUndefined();
+    expect(parseFile({ changeType: 7 })).toBeUndefined();
+  });
+
+  test("registration carries agent summaries and bounds their length", () => {
+    const overLong = "s".repeat(5_000);
+    const registration = parseSessionRegistration({
+      registrationVersion: SESSION_BROKER_REGISTRATION_VERSION,
+      sessionId: "session-1",
+      pid: 123,
+      cwd: "/repo",
+      launchedAt: "2026-03-22T00:00:00.000Z",
+      info: {
+        inputKind: "vcs",
+        title: "repo working tree",
+        sourceLabel: "/repo",
+        agentSummary: "What this whole change does.",
+        files: [
+          { id: "f1", path: "a.ts", additions: 1, deletions: 0, hunks: [], agentSummary: overLong },
+        ],
+      },
+    });
+
+    expect(registration?.info.agentSummary).toBe("What this whole change does.");
+    // Truncated, not rejected: descriptive text from a peer is bounded, but an over-long
+    // one is a sloppy sidecar rather than a corrupt registration, and dropping the whole
+    // review over it would lose the diff too.
+    expect(registration?.info.files[0]?.agentSummary).toHaveLength(4_000);
+  });
+
   test("registration preserves only recognized experimental feature ids", () => {
     const registration = parseSessionRegistration({
       registrationVersion: SESSION_BROKER_REGISTRATION_VERSION,

@@ -8,6 +8,7 @@ import type {
   LayoutMode,
   PagerCommandInput,
   ParsedCliInput,
+  ReviewOperation,
   SessionCommentListType,
   SessionCommentApplyItemInput,
 } from "./types";
@@ -173,6 +174,61 @@ export const CLI_REFERENCE_COMMANDS = {
     path: "markup guide",
     summary: "print the experimental STML authoring guide",
     synopsis: ["hunk markup guide"],
+  },
+  review: {
+    path: "review",
+    summary: "drive a repo-local review headlessly, for an editor client",
+    synopsis: [
+      "hunk review export [target] [-- <pathspec...>] --json",
+      "hunk review comment add --file <path> --side <old|new> --line <n> --body <text> --json",
+      "hunk review comment reply --file <path> --id <id> --body <text> --json",
+      "hunk review comment status --file <path> --id <id> --status <active|resolved> --json",
+      "hunk review comment delete --file <path> --id <id> --json",
+      "hunk review note reply --file <path> --note <id> --body <text> --json",
+      "hunk review note status --file <path> --note <id> --status <active|resolved> --json",
+      "hunk review viewed set --file <path> [--file <path>...] (--viewed | --unviewed) --json",
+      "hunk review file source --file <path> --side <old|new> --json",
+      "hunk review focus set [target] [--file <path> [--side <old|new>] [--line <n>]] --json",
+      "hunk review focus get --json",
+      "hunk review focus clear --json",
+    ],
+    options: [
+      ...DIFF_OPTIONS,
+      { flag: "--json", description: "emit structured JSON (the only supported format)" },
+      { flag: "--include-patch", description: "export: include raw unified patch text per file" },
+      {
+        flag: "--repo <path>",
+        description: "repo root to operate on instead of the current directory",
+      },
+      {
+        flag: "--file <path>",
+        description:
+          "repo-relative file the operation targets; repeatable for `viewed set`, which applies them in one write",
+      },
+      {
+        flag: "--side <side>",
+        description: "comment add / file source: `old` or `new` diff side",
+      },
+      { flag: "--line <n>", description: "comment add: line number on that side" },
+      { flag: "--body <text>", description: "comment add/reply: comment body" },
+      { flag: "--stdin", description: "comment add/reply: read the body from stdin instead" },
+      { flag: "--author <name>", description: "comment add/reply: author recorded on the comment" },
+      {
+        flag: "--id <id>",
+        description:
+          "comment reply/status/delete: the comment id; for `reply`, the comment being answered",
+      },
+      {
+        flag: "--note <id>",
+        description: "note reply/status: the agent note id, as the current review reports it",
+      },
+      {
+        flag: "--status <status>",
+        description: "comment status / note status: `active` or `resolved`",
+      },
+      { flag: "--viewed", description: "viewed set: mark the named files viewed" },
+      { flag: "--unviewed", description: "viewed set: mark the named files unviewed" },
+    ],
   },
   "skill-path": {
     path: "skill path",
@@ -357,6 +413,7 @@ function renderCliHelp() {
     "  hunk patch [file]                       review a patch file or stdin",
     "  hunk pager                              general Git pager wrapper with diff detection",
     "  hunk difftool <left> <right> [path]     review Git difftool file pairs",
+    "  hunk review export --json                emit a headless JSON review snapshot",
     "  hunk session <subcommand>               inspect or control a live Hunk session",
     "  hunk markup render (<file> | -)         preview experimental STML note markup",
     "  hunk markup guide                       print the experimental STML authoring guide",
@@ -676,6 +733,364 @@ async function parseDiffCommand(tokens: string[], argv: string[]): Promise<Parse
   );
 }
 
+/**
+ * Review-command flags, peeled off before range selection is delegated to `hunk diff`.
+ *
+ * Value flags collect every occurrence rather than keeping the last one. Overwriting made
+ * `--file a --file b` mark only `b` and say nothing about `a`, which is the worst kind of
+ * argument bug: the command succeeds and reports a review in which half the request simply
+ * did not happen. Collecting lets each reader state its own arity and fail when it is
+ * broken.
+ */
+type ReviewFlags = Record<string, string[] | true>;
+
+/** Boolean flags `hunk review` understands; everything else with a value is a value flag. */
+const REVIEW_BOOLEAN_FLAGS = new Set([
+  "--json",
+  "--include-patch",
+  "--viewed",
+  "--unviewed",
+  "--stdin",
+]);
+
+/**
+ * Split review-command flags out of a token list, leaving diff-shaped tokens behind.
+ *
+ * Walks once rather than filtering so value flags consume their argument, and never
+ * inspects tokens after `--` because the caller has already removed pathspecs. Unknown
+ * tokens fall through to `hunk diff`'s parser, which is what rejects a real typo.
+ */
+function splitReviewFlags(tokens: string[], valueFlags: ReadonlySet<string>) {
+  const flags: ReviewFlags = {};
+  const diffTokens: string[] = [];
+
+  /** Append one occurrence, so a repeated flag is preserved rather than overwritten. */
+  const collect = (name: string, value: string) => {
+    const existing = flags[name];
+    flags[name] = existing === true || existing === undefined ? [value] : [...existing, value];
+  };
+
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index]!;
+
+    if (REVIEW_BOOLEAN_FLAGS.has(token)) {
+      flags[token] = true;
+      continue;
+    }
+
+    const equalsIndex = token.indexOf("=");
+    const inlineName = equalsIndex > 0 ? token.slice(0, equalsIndex) : undefined;
+    if (inlineName && valueFlags.has(inlineName)) {
+      const value = token.slice(equalsIndex + 1);
+      if (!value) {
+        throw new Error(`\`${inlineName}\` requires a value.`);
+      }
+      collect(inlineName, value);
+      continue;
+    }
+
+    if (valueFlags.has(token)) {
+      const value = tokens[index + 1];
+      if (value === undefined) {
+        throw new Error(`\`${token}\` requires a value.`);
+      }
+      collect(token, value);
+      index += 1;
+      continue;
+    }
+
+    diffTokens.push(token);
+  }
+
+  return { flags, diffTokens };
+}
+
+/** Read every occurrence of one value flag, in the order they were given. */
+function reviewFlagValues(flags: ReviewFlags, name: string): string[] {
+  const value = flags[name];
+  return value === true || value === undefined ? [] : value;
+}
+
+/** Read one optional string flag, refusing a repeat the reader could only ignore. */
+function optionalReviewFlag(flags: ReviewFlags, name: string): string | undefined {
+  const values = reviewFlagValues(flags, name);
+  if (values.length > 1) {
+    throw new Error(`\`${name}\` accepts one value, but was given ${values.length}.`);
+  }
+
+  return values[0];
+}
+
+/** Read one required string flag, failing with the flag's own name. */
+function requireReviewFlag(flags: ReviewFlags, name: string): string {
+  const value = optionalReviewFlag(flags, name);
+  if (value === undefined) {
+    throw new Error(`\`${name}\` is required.`);
+  }
+
+  return value;
+}
+
+/** Read one or more values for a flag whose subcommand acts on a set. */
+function requireReviewFlagList(flags: ReviewFlags, name: string): string[] {
+  const values = reviewFlagValues(flags, name);
+  if (values.length === 0) {
+    throw new Error(`\`${name}\` is required.`);
+  }
+
+  return values;
+}
+
+/** Read one required positive integer flag. */
+function requireReviewLine(flags: ReviewFlags): number {
+  const raw = requireReviewFlag(flags, "--line");
+  const line = Number(raw);
+  if (!Number.isInteger(line) || line <= 0) {
+    throw new Error("`--line` requires a positive integer.");
+  }
+
+  return line;
+}
+
+/** Read the diff side a comment anchors to. */
+function requireReviewSide(flags: ReviewFlags) {
+  const side = requireReviewFlag(flags, "--side");
+  if (side !== "old" && side !== "new") {
+    throw new Error("`--side` must be `old` or `new`.");
+  }
+
+  return side;
+}
+
+/** Value-taking flags for every `hunk review` subcommand, keyed by subcommand path. */
+const REVIEW_VALUE_FLAGS: Record<string, ReadonlySet<string>> = {
+  export: new Set(["--repo"]),
+  "comment add": new Set(["--repo", "--file", "--side", "--line", "--body", "--author"]),
+  "comment reply": new Set(["--repo", "--file", "--id", "--body", "--author"]),
+  "comment status": new Set(["--repo", "--file", "--id", "--status"]),
+  "comment delete": new Set(["--repo", "--file", "--id"]),
+  "note reply": new Set(["--repo", "--file", "--note", "--body", "--author"]),
+  "note status": new Set(["--repo", "--file", "--note", "--status"]),
+  "viewed set": new Set(["--repo", "--file"]),
+  "file source": new Set(["--repo", "--file", "--side"]),
+  "focus set": new Set(["--repo", "--file", "--side", "--line"]),
+  "focus get": new Set(["--repo"]),
+  "focus clear": new Set(["--repo"]),
+};
+
+/** Review subcommands whose first token is a group name rather than the action. */
+const REVIEW_COMMAND_GROUPS = new Set(["comment", "note", "viewed", "file", "focus"]);
+
+/** Build the review operation one subcommand's flags describe. */
+function buildReviewOperation(subcommand: string, flags: ReviewFlags): ReviewOperation {
+  if (subcommand === "export") {
+    return { name: "export", includePatch: flags["--include-patch"] === true };
+  }
+
+  if (subcommand === "comment add") {
+    const body = optionalReviewFlag(flags, "--body");
+    if (body === undefined && flags["--stdin"] !== true) {
+      throw new Error("`hunk review comment add` requires --body <text> or --stdin.");
+    }
+
+    const author = optionalReviewFlag(flags, "--author");
+
+    return {
+      name: "comment-add",
+      file: requireReviewFlag(flags, "--file"),
+      side: requireReviewSide(flags),
+      line: requireReviewLine(flags),
+      // An empty body is filled from stdin by the runner; parsing stays synchronous.
+      body: body ?? "",
+      ...(author !== undefined ? { author } : {}),
+    };
+  }
+
+  if (subcommand === "comment reply") {
+    const body = optionalReviewFlag(flags, "--body");
+    if (body === undefined && flags["--stdin"] !== true) {
+      throw new Error("`hunk review comment reply` requires --body <text> or --stdin.");
+    }
+
+    const author = optionalReviewFlag(flags, "--author");
+
+    return {
+      name: "comment-reply",
+      file: requireReviewFlag(flags, "--file"),
+      id: requireReviewFlag(flags, "--id"),
+      body: body ?? "",
+      ...(author !== undefined ? { author } : {}),
+    };
+  }
+
+  if (subcommand === "note reply") {
+    const body = optionalReviewFlag(flags, "--body");
+    if (body === undefined && flags["--stdin"] !== true) {
+      throw new Error("`hunk review note reply` requires --body <text> or --stdin.");
+    }
+
+    const author = optionalReviewFlag(flags, "--author");
+
+    return {
+      name: "note-reply",
+      file: requireReviewFlag(flags, "--file"),
+      note: requireReviewFlag(flags, "--note"),
+      body: body ?? "",
+      ...(author !== undefined ? { author } : {}),
+    };
+  }
+
+  if (subcommand === "note status") {
+    const status = requireReviewFlag(flags, "--status");
+    if (status !== "active" && status !== "resolved") {
+      throw new Error("`--status` must be `active` or `resolved`.");
+    }
+
+    return {
+      name: "note-status",
+      file: requireReviewFlag(flags, "--file"),
+      note: requireReviewFlag(flags, "--note"),
+      status,
+    };
+  }
+
+  if (subcommand === "comment status") {
+    const status = requireReviewFlag(flags, "--status");
+    if (status !== "active" && status !== "resolved") {
+      throw new Error("`--status` must be `active` or `resolved`.");
+    }
+
+    return {
+      name: "comment-status",
+      file: requireReviewFlag(flags, "--file"),
+      id: requireReviewFlag(flags, "--id"),
+      status,
+    };
+  }
+
+  if (subcommand === "comment delete") {
+    return {
+      name: "comment-delete",
+      file: requireReviewFlag(flags, "--file"),
+      id: requireReviewFlag(flags, "--id"),
+    };
+  }
+
+  if (subcommand === "focus get") {
+    return { name: "focus-get" };
+  }
+
+  if (subcommand === "focus clear") {
+    return { name: "focus-clear" };
+  }
+
+  if (subcommand === "focus set") {
+    const file = optionalReviewFlag(flags, "--file");
+    const line = optionalReviewFlag(flags, "--line");
+    const side = optionalReviewFlag(flags, "--side");
+
+    if (line !== undefined && file === undefined) {
+      throw new Error("`hunk review focus set --line` also requires --file <path>.");
+    }
+
+    if (side !== undefined && side !== "old" && side !== "new") {
+      throw new Error("`--side` must be `old` or `new`.");
+    }
+
+    const lineNumber = line === undefined ? undefined : Number(line);
+    if (lineNumber !== undefined && (!Number.isInteger(lineNumber) || lineNumber < 1)) {
+      throw new Error("`--line` must be a positive 1-based line number.");
+    }
+
+    return {
+      name: "focus-set",
+      ...(file !== undefined ? { file } : {}),
+      ...(side !== undefined ? { side } : {}),
+      ...(lineNumber !== undefined ? { line: lineNumber } : {}),
+    };
+  }
+
+  if (subcommand === "file source") {
+    return {
+      name: "file-source",
+      file: requireReviewFlag(flags, "--file"),
+      side: requireReviewSide(flags),
+    };
+  }
+
+  const viewed = flags["--viewed"] === true;
+  const unviewed = flags["--unviewed"] === true;
+  if (viewed === unviewed) {
+    throw new Error("`hunk review viewed set` requires exactly one of --viewed or --unviewed.");
+  }
+
+  // A set, not a file: marking a folder viewed is one lock and one write rather than a
+  // round trip per file, each returning a whole review the caller then throws away.
+  return { name: "viewed-set", files: requireReviewFlagList(flags, "--file"), viewed };
+}
+
+/**
+ * Parse the `hunk review` command group, the headless surface editor clients drive.
+ *
+ * Every subcommand shares one shape: export-side flags peeled off, then range selection
+ * handed to `hunk diff`'s parser verbatim. A client that can name a changeset for `export`
+ * names the same one for a comment, so the anchor a comment is written against is the
+ * anchor the next export resolves.
+ */
+async function parseReviewCommand(tokens: string[], argv: string[]): Promise<ParsedCliInput> {
+  const { commandTokens, pathspecs } = splitPathspecArgs(tokens);
+  const helpText = () => `${createCliReferenceCommand("review").helpInformation().trimEnd()}\n`;
+
+  if (commandTokens.length === 0 || commandTokens[0] === "--help" || commandTokens[0] === "-h") {
+    return { kind: "help", text: helpText() };
+  }
+
+  const [group, maybeAction] = commandTokens;
+  const subcommand =
+    group && REVIEW_COMMAND_GROUPS.has(group) ? `${group} ${maybeAction ?? ""}`.trim() : group!;
+  const valueFlags = REVIEW_VALUE_FLAGS[subcommand];
+
+  if (!valueFlags) {
+    throw new Error(`Unknown review subcommand: ${commandTokens.slice(0, 2).join(" ")}`);
+  }
+
+  const rest = commandTokens.slice(subcommand.includes(" ") ? 2 : 1);
+  if (rest.includes("--help") || rest.includes("-h")) {
+    return { kind: "help", text: helpText() };
+  }
+
+  const { flags, diffTokens } = splitReviewFlags(rest, valueFlags);
+
+  if (flags["--json"] !== true) {
+    throw new Error(
+      `\`hunk review ${subcommand}\` currently emits JSON only. Pass --json to confirm the format.`,
+    );
+  }
+
+  const operation = buildReviewOperation(subcommand, flags);
+  const repo = optionalReviewFlag(flags, "--repo");
+
+  // Range selection is `hunk diff`'s, verbatim: a headless review must describe exactly the
+  // changeset the interactive command would have opened for the same arguments.
+  const parsed = await parseDiffCommand(
+    pathspecs.length > 0 ? [...diffTokens, "--", ...pathspecs] : diffTokens,
+    argv,
+  );
+
+  if (parsed.kind !== "vcs") {
+    throw new Error(
+      "`hunk review` operates on a repository target. Use `hunk review <subcommand> [target] [-- <pathspec...>]`.",
+    );
+  }
+
+  return {
+    kind: "review",
+    input: parsed,
+    operation,
+    ...(repo !== undefined ? { repo } : {}),
+  };
+}
+
 /** Parse the Git-style `hunk show` command. */
 async function parseShowCommand(tokens: string[], argv: string[]): Promise<ParsedCliInput> {
   const { commandTokens, pathspecs } = splitPathspecArgs(tokens);
@@ -794,7 +1209,8 @@ function requireReloadableCliInput(input: ParsedCliInput): CliInput {
     input.kind === "pager" ||
     input.kind === "daemon-serve" ||
     input.kind === "markup-render" ||
-    input.kind === "markup-guide"
+    input.kind === "markup-guide" ||
+    input.kind === "review"
   ) {
     throw new Error(
       "Session reload requires a Hunk review command after --, such as `diff` or `show`.",
@@ -1517,6 +1933,8 @@ export async function parseCli(argv: string[]): Promise<ParsedCliInput> {
       return parseDifftoolCommand(rest, argv);
     case "stash":
       return parseStashCommand(rest, argv);
+    case "review":
+      return parseReviewCommand(rest, argv);
     case "session":
       return parseSessionCommand(rest);
     case "markup":

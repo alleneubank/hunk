@@ -1,3 +1,4 @@
+import type { ChangeTypes } from "@pierre/diffs";
 import type { ExperimentalFeature } from "../core/experimental";
 import type { CommentTargetInput, DiffSide } from "../core/liveComments";
 import type { CliInput, ReviewNoteSource } from "../core/types";
@@ -21,6 +22,22 @@ export interface SessionFileSummary {
   additions: number;
   deletions: number;
   hunkCount: number;
+  /**
+   * How the file changed, carried verbatim from the parsed patch.
+   *
+   * A client needs this to know which sides of the diff actually exist — a `deleted` file
+   * has no new-side content and an editor cannot open a working-tree document for it. The
+   * TUI decides the same question from the same field, so no client has to infer it.
+   */
+  changeType: ChangeTypes;
+  /**
+   * The sidecar's summary for this file: why it changed.
+   *
+   * Distinct from the hunk-level notes, which explain one passage. A client shows this
+   * where it describes the file as a whole — a row tooltip, a header — and it is absent
+   * whenever the review has no sidecar or the sidecar says nothing about this file.
+   */
+  agentSummary?: string;
 }
 
 export interface SessionReviewHunk {
@@ -47,6 +64,7 @@ export interface HunkSessionInfo {
   title: string;
   sourceLabel: string;
   experimentalFeatures?: ExperimentalFeature[];
+  agentSummary?: string;
   files: SessionReviewFile[];
 }
 
@@ -127,6 +145,15 @@ export interface SessionLiveCommentSummary {
 
 export interface SessionReviewNoteSummary {
   noteId: string;
+  /**
+   * Content identity, stable across everything `noteId` is not.
+   *
+   * `noteId` embeds the file's index in the changeset, so it moves whenever an earlier file
+   * enters or leaves the review — which makes it safe to name a note within one payload and
+   * unsafe to persist anything against. A reviewer's reply outlives the payload it was
+   * written in, so it is keyed on what the note actually says instead.
+   */
+  noteKey: string;
   source: ReviewNoteSource;
   filePath: string;
   hunkIndex?: number;
@@ -255,6 +282,8 @@ export interface SessionReview {
   repoRoot?: string;
   inputKind: CliInput["kind"];
   experimentalFeatures?: ExperimentalFeature[];
+  /** The sidecar's changeset summary: what this whole change does, in the agent's words. */
+  agentSummary?: string;
   selectedFile: SessionReviewFile | null;
   selectedHunk: SessionReviewHunk | null;
   showAgentNotes: boolean;
