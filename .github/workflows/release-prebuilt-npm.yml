@@ -40,7 +40,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
@@ -56,6 +56,11 @@ jobs:
 
       - name: Compare release benchmark snapshot
         id: benchmark-gate
+        # [fork] Dogfood -fork. prereleases carry no committed release-benchmark
+        # snapshot (`bun run bench:release` before tagging), so the perf compare
+        # would hard-fail and block the whole release. Skip the gate for fork
+        # tags; upstream v* releases still run it.
+        if: ${{ !contains(github.ref_name, '-fork.') }}
         continue-on-error: ${{ github.event_name == 'workflow_dispatch' && inputs.allow_benchmark_regression }}
         run: |
           mkdir -p dist/release
@@ -108,7 +113,7 @@ jobs:
             runner: macos-14
     steps:
       - name: Check out repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
@@ -137,7 +142,7 @@ jobs:
       - build-binaries
     steps:
       - name: Check out repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
@@ -145,7 +150,7 @@ jobs:
           bun-version: 1.3.14
 
       - name: Set up Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: 22
 
@@ -189,14 +194,14 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - stage-release
-    if: github.event_name == 'push' || inputs.publish == true
+    # [fork] The fork does not publish to npm. Gate this job behind an opt-in
+    # repo variable so it is SKIPPED (not failed) when `HUNK_NPM_PUBLISH` is
+    # unset — a failing `npm whoami` would otherwise turn the whole run red.
+    if: (github.event_name == 'push' || inputs.publish == true) && vars.HUNK_NPM_PUBLISH == 'true'
     environment: npm
-    permissions:
-      contents: read
-      id-token: write
     steps:
       - name: Check out repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
@@ -204,13 +209,10 @@ jobs:
           bun-version: 1.3.14
 
       - name: Set up Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
-
-      - name: Use npm with trusted publishing support
-        run: npm install -g npm@11.17.0
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -224,21 +226,30 @@ jobs:
       - name: Show staged packages
         run: find dist/release/npm -maxdepth 3 -type f | sort
 
+      - name: Verify npm auth
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm whoami
+
       - name: Publish packages
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: bun run publish:prebuilt:npm -- --tag "${{ github.event_name == 'workflow_dispatch' && inputs.npm_tag || ((contains(github.ref_name, '-alpha') || contains(github.ref_name, '-beta') || contains(github.ref_name, '-rc')) && 'beta' || 'latest') }}"
 
   create-github-release:
     name: Create GitHub release
     runs-on: ubuntu-latest
+    # [fork] The fork ships GitHub-release tarballs, not npm packages, so the
+    # release must NOT wait on `publish` (which needs an npm token the fork
+    # lacks). Depend only on the built binaries; npm publish is gated off below.
     needs:
       - build-binaries
-      - publish
     if: github.event_name == 'push'
     permissions:
       contents: write
     steps:
       - name: Check out repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
@@ -256,11 +267,11 @@ jobs:
           mkdir -p dist/release/github
           while IFS= read -r -d '' directory; do
             package_name="$(basename "$directory")"
-            binary="$directory/hunk"
-            if [ ! -f "$binary" ] && [ -f "$directory/hunk.exe" ]; then
-              binary="$directory/hunk.exe"
+            binary_name="hunk"
+            if [ ! -f "$directory/hunk" ] && [ -f "$directory/hunk.exe" ]; then
+              binary_name="hunk.exe"
             fi
-            if [ ! -f "$binary" ]; then
+            if [ ! -f "$directory/$binary_name" ]; then
               echo "Missing release binary in $directory" >&2
               exit 1
             fi
@@ -268,9 +279,15 @@ jobs:
               echo "Missing bundled Hunk review skill in $directory" >&2
               exit 1
             fi
-            chmod 0755 "$binary"
-            tar -C "$(dirname "$directory")" -czf "dist/release/github/${package_name}.tar.gz" "$package_name"
+            chmod 0755 "$directory/$binary_name"
+            # [fork] Flatten the archive: binary + skills/ + metadata.json sit at
+            # the tarball ROOT (not under a hunkdiff-<os>-<arch>/ directory) so
+            # mise's github: backend resolves `exe = "hunk"` directly on extract.
+            tar -C "$directory" -czf "dist/release/github/${package_name}.tar.gz" \
+              "$binary_name" skills metadata.json
           done < <(find dist/release/artifacts -mindepth 1 -maxdepth 1 -type d -name 'hunkdiff-*' -print0 | sort -z)
+          # [fork] Emit a sha256 manifest (`<hash>  <name>`) over the tarballs.
+          ( cd dist/release/github && sha256sum *.tar.gz > checksums.txt )
           find dist/release/github -maxdepth 1 -type f | sort
 
       - name: Create or update GitHub release
@@ -280,7 +297,8 @@ jobs:
         run: |
           prerelease_args=()
           case "$TAG_NAME" in
-            *-alpha*|*-beta*|*-rc*)
+            # [fork] `-fork.` dogfood tags are always prereleases.
+            *-alpha*|*-beta*|*-rc*|*-fork.*)
               prerelease_args+=(--prerelease)
               ;;
           esac
