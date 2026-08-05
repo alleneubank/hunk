@@ -63,7 +63,15 @@ describe("PTY viewed state", () => {
       await session.waitForText(/viewed 0\/5/, { timeout: 15_000 });
 
       await session.click(/M beta\.ts\s+\+2 -1/);
-      await harness.waitForSnapshot(session, (text) => text.includes("betaOnly = true"), 5_000);
+      // Beta is already on the first frame beside alpha, so its content alone proves nothing.
+      // Wait for alpha to scroll off instead: that only happens once the click has committed a
+      // new selection, which is what the following `v` depends on. Without it `v` races the
+      // click and marks whichever file was selected first.
+      await harness.waitForSnapshot(
+        session,
+        (text) => text.includes("betaOnly = true") && !text.includes("alphaOnly = true"),
+        5_000,
+      );
       await session.press("v");
       await session.click(/M alpha\.ts\s+\+2 -1/);
       await harness.waitForSnapshot(session, (text) => text.includes("alphaOnly = true"), 5_000);
