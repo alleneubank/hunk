@@ -159,6 +159,32 @@ CLI input
 - Prefer concise, user-visible entries over internal refactors unless the refactor changes user-visible behavior.
 - Keep each changeset summary to one concise user-facing sentence; put implementation detail in the PR or supporting docs.
 
+## fork dogfood releases (alleneubank/hunk)
+
+This section is fork-only guidance. Upstream agents can ignore it.
+
+- **Remote layout:** `origin` = personal fork (`alleneubank/hunk`), `upstream` = `modem-dev/hunk`. The release script defaults to `origin`.
+- **One command owns the cut:** `scripts/release-fork.ts` rebuilds the `fork` branch as `main` + the fork-owned files (`.github/workflows/release-prebuilt-npm.yml`, `scripts/release-fork.ts`), stamps `<base>-fork.<YYYYMMDD>.g<sha>`, and tags it. Do not hand-edit version lines or invent a second release path.
+- **Dry run first (default, no flags):**
+  ```bash
+  bun run scripts/release-fork.ts
+  ```
+  It prints the planned version/tag and the base's Main CI verdict.
+- **Gate:** tagging refuses unless the base sha has a completed successful `Main CI` run on the fork repo. Missing, in-progress, failed, and unreadable `gh` all fail closed. Deliberate dogfood only: `--allow-red-ci`.
+- **Cut (local only — no push):**
+  ```bash
+  bun run scripts/release-fork.ts --run
+  ```
+  Rebuilds `fork`, commits one `[fork]` commit, tags. Leaves you on `fork`.
+- **Publish (human boundary):** push the branch and the tag. The tag push triggers the fork's release CI (prebuilt npm + GitHub release assets):
+  ```bash
+  git push --force-with-lease origin refs/heads/fork:refs/heads/fork
+  git push origin <tag>
+  ```
+  Or: `bun run scripts/release-fork.ts --run --push` when the operator has authorized publish for that cut.
+- **After a release ships:** pin the new version in dotfiles/mise for the fleet; install or reinstall the VS Code extension VSIX on hosts that dogfood it (`code --install-extension editors/vscode/hunk-vscode-*.vsix`). The CLI binary comes from mise/GitHub release assets, not the VSIX.
+- **Do not** cut a tag from a red or unrun base just because the prior tag already exists in the wild — wait for green or pass `--allow-red-ci` with eyes open.
+
 ## repo notes
 
 - Local review artifacts are ignored on purpose. Leave them alone unless the user explicitly wants them updated, and do not commit them.
