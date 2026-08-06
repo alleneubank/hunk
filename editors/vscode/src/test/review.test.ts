@@ -92,6 +92,41 @@ async function extensionApi(): Promise<HunkReviewExtensionApi> {
   return (await extension.activate()) as HunkReviewExtensionApi;
 }
 
+/** Poll until the active tab is a side-by-side diff (REQ-VSCODE-022 promotion). */
+async function waitForActiveTextDiff(timeoutMs = 5000): Promise<vscode.TabInputTextDiff> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const tab = vscode.window.tabGroups.activeTabGroup.activeTab;
+    if (tab?.input instanceof vscode.TabInputTextDiff) {
+      return tab.input;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error("timed out waiting for an active text diff tab");
+}
+
+/** Poll until a visible editor matches the predicate (reveal / focus assertions). */
+async function waitForVisibleEditor(
+  match: (editor: vscode.TextEditor) => boolean,
+  timeoutMs = 5000,
+): Promise<vscode.TextEditor> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const editor = vscode.window.visibleTextEditors.find(match);
+    if (editor) {
+      return editor;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error("timed out waiting for a matching visible editor");
+}
+
+/** Scripted pre-image so opening a review diff does not fail the content provider. */
+function alphaSourceResponse(args: string[]): { path: string; side: string; text: string } {
+  const side = args[args.indexOf("--side") + 1] ?? "old";
+  return { path: "alpha.ts", side, text: "export const alpha = 1;\n" };
+}
+
 /** Collect the error/warning messages VS Code was asked to show during one action. */
 async function captureMessages<T>(
   action: () => Promise<T>,
@@ -489,6 +524,188 @@ suite("hunk review in VS Code", () => {
     assert.equal(thread.uri.scheme, "hunk-review");
     assert.equal(thread.uri.query, "side=old");
     assert.equal(thread.range?.start.line, 3);
+  });
+
+  // REQ-VSCODE-022: the Comments panel opens the thread URI alone; that must become the
+  // review diff, not a lone working-tree (or pre-image) document.
+  test("opening a new-side reviewed document plain promotes into the review diff", async () => {
+    const api = await extensionApi();
+    const { runner } = scriptRunner([
+      buildExport({
+        comments: {
+          "alpha.ts": [
+            {
+              id: "c1",
+              body: "check this",
+              createdAt: "2026-08-01T00:00:00.000Z",
+              updatedAt: "2026-08-01T00:00:00.000Z",
+              side: "new",
+              line: 1,
+              originalLine: 1,
+              status: "active",
+              outdated: false,
+            },
+          ],
+        },
+      }),
+      alphaSourceResponse,
+    ]);
+    api.__setHunkRunnerForTests(runner);
+
+    await vscode.commands.executeCommand("workbench.action.closeAllEditors");
+    await vscode.commands.executeCommand("hunkReview.openReview");
+    const thread = api.__getActiveReviewForTests()?.comments.threads.at(-1);
+    assert.ok(thread, "expected a rendered comment thread");
+    assert.equal(thread.uri.scheme, "file");
+
+    const document = await vscode.workspace.openTextDocument(thread.uri);
+    const line = thread.range?.start.line ?? 0;
+    await vscode.window.showTextDocument(document, {
+      selection: new vscode.Range(line, 0, line, 0),
+      preview: false,
+    });
+
+    const input = await waitForActiveTextDiff();
+    assert.equal(input.original.scheme, "hunk-review");
+    assert.ok(
+      input.modified.fsPath.endsWith("alpha.ts"),
+      `expected modified side to be the workspace file, got ${input.modified.toString()}`,
+    );
+
+    // Revealed on the new-side document, not left on a random line after promote.
+    const revealed = await waitForVisibleEditor(
+      (editor) =>
+        editor.document.uri.scheme === "file" &&
+        editor.document.uri.fsPath.endsWith("alpha.ts") &&
+        editor.selection.active.line === line,
+    );
+    assert.equal(revealed.selection.active.line, line);
+
+    // The plain Comments-panel tab must not linger beside the review diff.
+    const plainLeft = vscode.window.tabGroups.activeTabGroup.tabs.some(
+      (tab) =>
+        tab.input instanceof vscode.TabInputText &&
+        tab.input.uri.toString() === thread.uri.toString(),
+    );
+    assert.equal(plainLeft, false);
+  });
+
+  test("opening an old-side reviewed document plain promotes into the review diff", async () => {
+    const api = await extensionApi();
+    const { runner } = scriptRunner([
+      buildExport({
+        comments: {
+          "alpha.ts": [
+            {
+              id: "c1",
+              body: "why was this removed?",
+              createdAt: "2026-08-01T00:00:00.000Z",
+              updatedAt: "2026-08-01T00:00:00.000Z",
+              side: "old",
+              line: 1,
+              originalLine: 1,
+              status: "active",
+              outdated: false,
+            },
+          ],
+        },
+      }),
+      alphaSourceResponse,
+    ]);
+    api.__setHunkRunnerForTests(runner);
+
+    await vscode.commands.executeCommand("workbench.action.closeAllEditors");
+    await vscode.commands.executeCommand("hunkReview.openReview");
+    const thread = api.__getActiveReviewForTests()?.comments.threads.at(-1);
+    assert.ok(thread, "expected a rendered comment thread");
+    assert.equal(thread.uri.scheme, "hunk-review");
+
+    const document = await vscode.workspace.openTextDocument(thread.uri);
+    const line = thread.range?.start.line ?? 0;
+    await vscode.window.showTextDocument(document, {
+      selection: new vscode.Range(line, 0, line, 0),
+      preview: false,
+    });
+
+    const input = await waitForActiveTextDiff();
+    assert.equal(input.original.scheme, "hunk-review");
+    assert.equal(input.original.query, "side=old");
+    assert.ok(
+      input.modified.fsPath.endsWith("alpha.ts"),
+      `expected modified side to be the workspace file, got ${input.modified.toString()}`,
+    );
+
+    const revealed = await waitForVisibleEditor(
+      (editor) =>
+        editor.document.uri.scheme === "hunk-review" &&
+        editor.document.uri.query === "side=old" &&
+        editor.selection.active.line === line,
+    );
+    assert.equal(revealed.document.uri.query, "side=old");
+    assert.equal(revealed.selection.active.line, line);
+  });
+
+  test("a plain open of a non-reviewed file is not promoted", async () => {
+    const api = await extensionApi();
+    const { runner } = scriptRunner([buildExport(), alphaSourceResponse]);
+    api.__setHunkRunnerForTests(runner);
+
+    await vscode.commands.executeCommand("workbench.action.closeAllEditors");
+    await vscode.commands.executeCommand("hunkReview.openReview");
+
+    // Fixture workspace only has alpha.ts under review; open a path outside the export.
+    const outside = vscode.Uri.joinPath(
+      vscode.workspace.workspaceFolders![0].uri,
+      "not-in-review.ts",
+    );
+    await vscode.workspace.fs.writeFile(outside, Buffer.from("not reviewed\n"));
+    try {
+      const document = await vscode.workspace.openTextDocument(outside);
+      await vscode.window.showTextDocument(document, { preview: false });
+
+      // Give the promote handler a beat; it must leave this as a plain tab.
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      const tab = vscode.window.tabGroups.activeTabGroup.activeTab;
+      assert.ok(tab?.input instanceof vscode.TabInputText);
+      assert.equal((tab.input as vscode.TabInputText).uri.fsPath, outside.fsPath);
+    } finally {
+      await vscode.workspace.fs.delete(outside, { useTrash: false });
+    }
+  });
+
+  test("an already-open review diff is left alone by promotion", async () => {
+    const api = await extensionApi();
+    const { runner } = scriptRunner([buildExport(), alphaSourceResponse]);
+    api.__setHunkRunnerForTests(runner);
+
+    await vscode.commands.executeCommand("workbench.action.closeAllEditors");
+    await vscode.commands.executeCommand("hunkReview.openReview");
+    await vscode.commands.executeCommand("hunkReview.openFile", "alpha.ts");
+    await waitForActiveTextDiff();
+
+    // Re-activate the modified side of the already-open diff: must not open a second pair.
+    const modified = vscode.window.visibleTextEditors.find(
+      (editor) =>
+        editor.document.uri.scheme === "file" && editor.document.uri.fsPath.endsWith("alpha.ts"),
+    );
+    assert.ok(modified, "expected the new side of the review diff to be visible");
+    await vscode.window.showTextDocument(modified.document, {
+      viewColumn: modified.viewColumn,
+      preview: false,
+      preserveFocus: false,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    assert.ok(
+      vscode.window.tabGroups.activeTabGroup.activeTab?.input instanceof vscode.TabInputTextDiff,
+    );
+    assert.equal(
+      vscode.window.tabGroups.all
+        .flatMap((group) => group.tabs)
+        .filter((tab) => tab.input instanceof vscode.TabInputTextDiff).length,
+      1,
+      "promotion must not stack a second review diff tab",
+    );
   });
 
   // Opening a subdirectory of a repository is ordinary; repo-relative paths are still

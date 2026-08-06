@@ -136,17 +136,26 @@
         }
       }
     },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "hunk-review",
+          "title": "Hunk Review",
+          "icon": "$(diff)"
+        }
+      ]
+    },
     "views": {
-      "scm": [
+      "hunk-review": [
         {
           "id": "hunkReview.summary",
-          "name": "Hunk Review Summary",
+          "name": "Summary",
           "type": "webview",
           "when": "hunkReview.hasSummary"
         },
         {
           "id": "hunkReview.files",
-          "name": "Hunk Review",
+          "name": "Files",
           "contextualTitle": "Hunk Review"
         }
       ]

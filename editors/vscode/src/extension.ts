@@ -306,12 +306,18 @@ function conversationTargetOf(thread: vscode.CommentThread): ConversationTarget 
     : undefined;
 }
 
+/** How long to wait for a compare pane to show up after `vscode.diff` resolves. */
+const REVEAL_WAIT_MS = 2000;
+
 /**
  * Put the cursor on one line of an already-open reviewed file.
  *
  * Resolved through `anchorUri` so a line an agent named against the old side lands in the
  * pre-image, beside the code it was talking about, rather than at the same number in an
  * unrelated new-side document (REQ-VSCODE-008).
+ *
+ * Polls briefly: `vscode.diff` can resolve before both panes are in `visibleTextEditors`,
+ * and a silent miss would leave REQ-VSCODE-022's "reveal the line" half unfinished.
  */
 async function revealLine(path: string, side: DiffSide, line: number | undefined): Promise<void> {
   if (line === undefined) {
@@ -319,9 +325,17 @@ async function revealLine(path: string, side: DiffSide, line: number | undefined
   }
 
   const uri = anchorUri(path, side);
-  const editor = vscode.window.visibleTextEditors.find(
-    (candidate) => candidate.document.uri.toString() === uri.toString(),
-  );
+  const deadline = Date.now() + REVEAL_WAIT_MS;
+  let editor: vscode.TextEditor | undefined;
+  while (Date.now() < deadline) {
+    editor = vscode.window.visibleTextEditors.find(
+      (candidate) => candidate.document.uri.toString() === uri.toString(),
+    );
+    if (editor) {
+      break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
 
   if (!editor) {
     return;
@@ -335,6 +349,95 @@ async function revealLine(path: string, side: DiffSide, line: number | undefined
   );
   editor.selection = new vscode.Selection(target, target);
   editor.revealRange(new vscode.Range(target, target), vscode.TextEditorRevealType.InCenter);
+
+  // Compare editors activate the modified side by default; an old-side anchor must take the
+  // primary pane or the reviewer still stares at the wrong half of the pair.
+  if (side === "old") {
+    await vscode.commands.executeCommand("workbench.action.compareEditor.focusPrimarySide");
+  }
+}
+
+/**
+ * Whether the active tab is already a side-by-side diff.
+ *
+ * Comment threads live on a single URI (the side they were resolved against). VS Code's
+ * Comments panel opens that URI as a plain text tab. The review surface is the diff, so a
+ * plain open of a reviewed document must be promoted — but only when the tab is not already
+ * the review (or any) diff, or every click inside an open review would re-open the same pair.
+ */
+function activeTabIsTextDiff(): boolean {
+  const tab = vscode.window.tabGroups.activeTabGroup.activeTab;
+  return tab?.input instanceof vscode.TabInputTextDiff;
+}
+
+/**
+ * Close orphan plain-text tabs for a URI in the active group only.
+ *
+ * Limited to the active group so a plain working-tree tab the reviewer kept open in another
+ * group is not collateral damage of Comments-panel promotion.
+ */
+async function closePlainTabsFor(uri: vscode.Uri): Promise<void> {
+  const target = uri.toString();
+  const toClose = vscode.window.tabGroups.activeTabGroup.tabs.filter(
+    (tab) => tab.input instanceof vscode.TabInputText && tab.input.uri.toString() === target,
+  );
+
+  if (toClose.length > 0) {
+    await vscode.window.tabGroups.close(toClose);
+  }
+}
+
+/**
+ * Open the review side-by-side for one path.
+ *
+ * Throws on failure so callers that must not run cleanup after a failed open (promotion)
+ * can await a real result. The palette/tree command wraps this in `guard`; promotion must
+ * not, or a swallowed error would still close the plain tab the comment landed on.
+ */
+async function openReviewDiff(path: string): Promise<void> {
+  const review = requireActive();
+  const file = review.session.files.find((entry) => entry.file.path === path)?.file;
+
+  if (!file) {
+    throw new HunkReviewError(`\`${path}\` is not part of this Hunk review.`);
+  }
+
+  await vscode.commands.executeCommand(
+    "vscode.diff",
+    documentUri(review, file, "old"),
+    documentUri(review, file, "new"),
+    `${path} (Hunk review)`,
+  );
+}
+
+/**
+ * Re-route a plain open of a reviewed document into the review diff (REQ-VSCODE-022).
+ *
+ * Covers the Comments panel (and any other "open this URI" path): threads are anchored to one
+ * side's document, so native reveal lands on a lone file. Opening the same path via the
+ * sidebar already goes through `openReviewDiff`; this is the missing half.
+ *
+ * `closePlainTabsFor` runs only after a successful open — a failed `vscode.diff` must leave
+ * the comment anchor open rather than leave the reviewer with neither surface.
+ */
+async function promoteReviewedEditorToDiff(editor: vscode.TextEditor): Promise<void> {
+  if (!active || activeTabIsTextDiff()) {
+    return;
+  }
+
+  const located = locateDocument(editor.document.uri);
+  if (!located) {
+    return;
+  }
+
+  // Capture before open replaces the editor; the Comments panel has already placed the
+  // cursor on the anchored line.
+  const line = editor.selection.active.line + 1;
+  const sourceUri = editor.document.uri;
+
+  await openReviewDiff(located.path);
+  await revealLine(located.path, located.side, line);
+  await closePlainTabsFor(sourceUri);
 }
 
 /**
@@ -684,21 +787,53 @@ export function activate(context: vscode.ExtensionContext): HunkReviewExtensionA
   context.subscriptions.push(
     vscode.commands.registerCommand("hunkReview.openFile", (path: string) =>
       guard(async () => {
-        const review = requireActive();
-        const file = review.session.files.find((entry) => entry.file.path === path)?.file;
-
-        if (!file) {
-          throw new HunkReviewError(`\`${path}\` is not part of this Hunk review.`);
-        }
-
-        await vscode.commands.executeCommand(
-          "vscode.diff",
-          documentUri(review, file, "old"),
-          documentUri(review, file, "new"),
-          `${path} (Hunk review)`,
-        );
+        await openReviewDiff(path);
       }),
     ),
+  );
+
+  // Comments panel / "open URI" reveal opens the thread's single-document anchor. While a
+  // review is open, promote that plain tab into the review diff so the reviewer keeps the
+  // change context the note or comment is about (REQ-VSCODE-022).
+  //
+  // Latest-wins queue, not a hard drop lock: rapid Comments navigation (A then B) must end
+  // on B's promote, not leave B as an unpromoted plain tab because A was still in flight.
+  let promoteInFlight = false;
+  let queuedPromoteEditor: vscode.TextEditor | undefined;
+
+  const flushPromoteQueue = async (): Promise<void> => {
+    if (promoteInFlight) {
+      return;
+    }
+    promoteInFlight = true;
+    try {
+      while (queuedPromoteEditor) {
+        const editor = queuedPromoteEditor;
+        queuedPromoteEditor = undefined;
+        try {
+          await promoteReviewedEditorToDiff(editor);
+        } catch (error) {
+          reportError(error);
+        }
+      }
+    } finally {
+      promoteInFlight = false;
+    }
+    // Something may have queued between the last while-check and clearing the flag.
+    if (queuedPromoteEditor) {
+      await flushPromoteQueue();
+    }
+  };
+
+  context.subscriptions.push(
+    vscode.window.onDidChangeActiveTextEditor((editor) => {
+      if (!editor) {
+        return;
+      }
+
+      queuedPromoteEditor = editor;
+      void flushPromoteQueue();
+    }),
   );
 
   context.subscriptions.push(

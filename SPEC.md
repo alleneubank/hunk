@@ -343,6 +343,12 @@ capture and REQ-REVIEW-008's merge.
   only in its label, and reopening is offered wherever resolving is. A surface that can close a
   conversation but never reopen one makes a misclick permanent and leaves deletion — which
   destroys the discussion — as the only way back.
+- **REQ-VSCODE-022** — Opening a reviewed document as a plain editor while a review is open
+  promotes into the review diff for that file (the same surface the sidebar opens), and
+  reveals the line the plain open landed on, on the side the document was for. Comment threads
+  are anchored to one URI; VS Code's Comments panel opens that URI alone, which would otherwise
+  drop the change context the comment or agent note is about. An open that is already a
+  side-by-side diff is left alone, so navigation inside the review does not re-open the pair.
 
 ## Invariants
 
