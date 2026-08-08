@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { discoverExtensions } from "./discovery";
@@ -143,6 +143,32 @@ describe("extension discovery", () => {
 
     expect(candidates).toEqual([{ id: "policy", path: repoConfigPath, origin: "repo" }]);
   });
+
+  test.skipIf(process.platform === "win32")(
+    "keeps an explicitly flagged extension when repo discovery reaches it through an alias",
+    () => {
+      const repo = createRepo("hunk-ext-canonical-dedup-");
+      const extension = writeExtensionFile(repo, ".hunk", "extensions", "fixture.ts");
+      const alias = join(createTempDir("hunk-ext-canonical-alias-"), "repo");
+      symlinkSync(repo, alias, "dir");
+
+      const candidates = discoverExtensions({
+        cwd: repo,
+        repoRoot: repo,
+        flagPaths: [join(alias, ".hunk", "extensions", "fixture.ts")],
+        env: {},
+      });
+
+      expect(candidates).toEqual([
+        {
+          id: "fixture",
+          path: join(alias, ".hunk", "extensions", "fixture.ts"),
+          origin: "flag",
+        },
+      ]);
+      expect(extension).not.toBe(candidates[0]?.path);
+    },
+  );
 
   test("expands explicit directory paths and keeps explicit file paths", () => {
     const root = createTempDir("hunk-ext-explicit-");

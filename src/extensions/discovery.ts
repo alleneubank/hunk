@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import { homedir } from "node:os";
 import { basename, isAbsolute, join, resolve } from "node:path";
-import { resolveGlobalExtensionsDir } from "../core/paths";
+import { resolveCanonicalPath, resolveGlobalExtensionsDir } from "../core/paths";
 import { findVcsRepoRootCandidate } from "../core/vcs";
 import { deriveExtensionId, type ExtensionCandidate, type ExtensionOrigin } from "./types";
 
@@ -301,11 +301,16 @@ export function discoverExtensions(options: DiscoverExtensionsOptions = {}): Ext
     const sorted = [...group.entries].sort((a, b) => a.sortKey.localeCompare(b.sortKey));
 
     for (const entry of sorted) {
-      if (seenPaths.has(entry.path)) {
+      // Explicit flags and repository discovery can spell the same file through a
+      // symlinked ancestor (`/var` vs `/private/var` on macOS). Compare canonical
+      // identities so the flag keeps its precedence instead of loading the entry twice
+      // under one extension id.
+      const pathKey = resolveCanonicalPath(entry.path);
+      if (seenPaths.has(pathKey)) {
         continue;
       }
 
-      seenPaths.add(entry.path);
+      seenPaths.add(pathKey);
       candidates.push({ id: entry.id, path: entry.path, origin: group.origin });
     }
   }
