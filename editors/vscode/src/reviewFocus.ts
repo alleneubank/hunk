@@ -1,5 +1,5 @@
 import type { DiffSide } from "./reviewExport";
-import type { ReviewTarget } from "./reviewTarget";
+import { isReviewTarget as isValidReviewTarget, type ReviewTarget } from "./reviewTarget";
 
 /**
  * Where an agent is pointing this reviewer.
@@ -26,25 +26,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-/** The three targets, matching `hunk review focus`'s own union. */
-function isReviewTarget(value: unknown): value is ReviewTarget {
-  if (!isRecord(value)) {
-    return false;
-  }
-
-  if (value.kind === "working-tree" || value.kind === "staged") {
-    return true;
-  }
-
-  return (
-    value.kind === "range" && typeof value.expression === "string" && value.expression.length > 0
-  );
-}
-
 export function isReviewFocusPayload(value: unknown): value is ReviewFocusPayload {
   if (
     !isRecord(value) ||
-    !isReviewTarget(value.target) ||
+    !isValidReviewTarget(value.target) ||
     typeof value.revision !== "number" ||
     !Number.isInteger(value.revision)
   ) {
@@ -76,5 +61,22 @@ export function sameReviewTarget(left: ReviewTarget, right: ReviewTarget): boole
     return false;
   }
 
-  return left.kind !== "range" || left.expression === (right as { expression: string }).expression;
+  const leftPathspecs = left.pathspecs ?? [];
+  const rightPathspecs = right.pathspecs ?? [];
+  if (
+    leftPathspecs.length !== rightPathspecs.length ||
+    leftPathspecs.some((pathspec, index) => pathspec !== rightPathspecs[index])
+  ) {
+    return false;
+  }
+
+  if (left.kind === "range") {
+    return left.expression === (right as { expression: string }).expression;
+  }
+
+  if (left.kind === "show" || left.kind === "stash-show") {
+    return left.ref === (right as { ref?: string }).ref;
+  }
+
+  return true;
 }

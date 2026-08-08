@@ -33,6 +33,29 @@ function createReviewRepo() {
   return repoDir;
 }
 
+/** Create a repo with a committed range and a different dirty workspace. */
+function createHistoricalReviewRepo() {
+  const repoDir = createReviewRepo();
+  git(repoDir, "add", "alpha.ts");
+  git(repoDir, "commit", "-m", "change alpha");
+  writeFileSync(join(repoDir, "alpha.ts"), "export const alpha = 99;\nexport const beta = 2;\n");
+  return repoDir;
+}
+
+/** Create a repo with one change parked in the Git stash. */
+function createStashReviewRepo() {
+  const repoDir = mkdtempSync(join(tmpdir(), "hunk-review-stash-cli-"));
+  git(repoDir, "init");
+  git(repoDir, "config", "user.name", "Test User");
+  git(repoDir, "config", "user.email", "test@example.com");
+  writeFileSync(join(repoDir, "alpha.ts"), "export const alpha = 1;\n");
+  git(repoDir, "add", "alpha.ts");
+  git(repoDir, "commit", "-m", "initial");
+  writeFileSync(join(repoDir, "alpha.ts"), "export const alpha = 2;\n");
+  git(repoDir, "stash", "push", "-m", "review fixture");
+  return repoDir;
+}
+
 /** One OS pipe buffer on the platforms this runs on; the size a client's read stops at. */
 const PIPE_BUFFER_BYTES = 64 * 1024;
 
@@ -128,6 +151,7 @@ describe("hunk review export CLI contract", () => {
       expect(payload.reviewCommentsVersion).toBe(1);
       expect(payload.review.files.map((file: { path: string }) => file.path)).toEqual(["alpha.ts"]);
       expect(payload.review.files[0].hunkCount).toBeGreaterThan(0);
+      expect(payload.sourceCapabilities).toEqual({ old: "hunk", new: "workspace" });
       expect(payload.viewedFilePaths).toEqual([]);
       expect(payload.commentsAvailable).toBe(true);
       expect(payload.comments).toEqual({});
@@ -235,6 +259,166 @@ describe("hunk review export CLI contract", () => {
       expect(JSON.parse(stdout).review.files.map((file: { path: string }) => file.path)).toEqual([
         "alpha.ts",
       ]);
+    } finally {
+      rmSync(repoDir, { recursive: true, force: true });
+    }
+  });
+
+  test("preserves pathspecs across export and file-source reads", () => {
+    const repoDir = createReviewRepo();
+    writeFileSync(join(repoDir, "beta.ts"), "export const beta = 2;\n");
+
+    try {
+      const exported = runHunk(repoDir, ["review", "export", "--json", "--", "beta.ts"]);
+      expect(exported.exitCode).toBe(0);
+      expect(
+        JSON.parse(exported.stdout).review.files.map((file: { path: string }) => file.path),
+      ).toEqual(["beta.ts"]);
+
+      const source = runHunk(repoDir, [
+        "review",
+        "file",
+        "source",
+        "--file",
+        "beta.ts",
+        "--side",
+        "new",
+        "--json",
+        "--",
+        "beta.ts",
+      ]);
+      expect(source.exitCode).toBe(0);
+      expect(JSON.parse(source.stdout).text).toBe("export const beta = 2;\n");
+    } finally {
+      rmSync(repoDir, { recursive: true, force: true });
+    }
+  });
+
+  test("preserves an explicit show operation and serves its historical new side", () => {
+    const repoDir = createHistoricalReviewRepo();
+
+    try {
+      const exported = runHunk(repoDir, ["review", "export", "--source", "show", "HEAD", "--json"]);
+      expect(exported.exitCode).toBe(0);
+      const payload = JSON.parse(exported.stdout);
+      expect(payload.review.inputKind).toBe("show");
+      expect(payload.sourceCapabilities).toEqual({ old: "hunk", new: "hunk" });
+
+      const source = runHunk(repoDir, [
+        "review",
+        "file",
+        "source",
+        "--source",
+        "show",
+        "HEAD",
+        "--file",
+        "alpha.ts",
+        "--side",
+        "new",
+        "--json",
+      ]);
+      expect(source.exitCode).toBe(0);
+      expect(JSON.parse(source.stdout).text).toBe(
+        "export const alpha = 10;\nexport const beta = 2;\n",
+      );
+    } finally {
+      rmSync(repoDir, { recursive: true, force: true });
+    }
+  });
+
+  test("records focus against the selected operation instead of collapsing to working tree", () => {
+    const repoDir = createHistoricalReviewRepo();
+
+    try {
+      const set = runHunk(repoDir, [
+        "review",
+        "focus",
+        "set",
+        "--source",
+        "show",
+        "HEAD",
+        "--file",
+        "alpha.ts",
+        "--side",
+        "new",
+        "--line",
+        "1",
+        "--json",
+      ]);
+      expect(set.exitCode).toBe(0);
+      expect(JSON.parse(set.stdout).focus.target).toEqual({ kind: "show", ref: "HEAD" });
+
+      const get = runHunk(repoDir, [
+        "review",
+        "focus",
+        "get",
+        "--source",
+        "show",
+        "HEAD",
+        "--json",
+      ]);
+      expect(get.exitCode).toBe(0);
+      expect(JSON.parse(get.stdout).focus.target).toEqual({ kind: "show", ref: "HEAD" });
+    } finally {
+      rmSync(repoDir, { recursive: true, force: true });
+    }
+  });
+
+  test("preserves a stash-show operation", () => {
+    const repoDir = createStashReviewRepo();
+
+    try {
+      const { exitCode, stdout } = runHunk(repoDir, [
+        "review",
+        "export",
+        "--source",
+        "stash-show",
+        "--json",
+      ]);
+      expect(exitCode).toBe(0);
+      const payload = JSON.parse(stdout);
+      expect(payload.review.inputKind).toBe("stash-show");
+      expect(payload.review.files.map((file: { path: string }) => file.path)).toEqual(["alpha.ts"]);
+      expect(payload.sourceCapabilities).toEqual({ old: "hunk", new: "hunk" });
+    } finally {
+      rmSync(repoDir, { recursive: true, force: true });
+    }
+  });
+
+  test("uses Hunk's index for the staged new side, not dirty workspace text", () => {
+    const repoDir = createReviewRepo();
+    writeFileSync(join(repoDir, "alpha.ts"), "export const alpha = 20;\nexport const beta = 2;\n");
+    git(repoDir, "add", "alpha.ts");
+    writeFileSync(join(repoDir, "alpha.ts"), "export const alpha = 30;\nexport const beta = 2;\n");
+
+    try {
+      const exported = runHunk(repoDir, [
+        "review",
+        "export",
+        "--source",
+        "diff",
+        "--staged",
+        "--json",
+      ]);
+      expect(exported.exitCode).toBe(0);
+      expect(JSON.parse(exported.stdout).sourceCapabilities).toEqual({ old: "hunk", new: "hunk" });
+
+      const source = runHunk(repoDir, [
+        "review",
+        "file",
+        "source",
+        "--source",
+        "diff",
+        "--staged",
+        "--file",
+        "alpha.ts",
+        "--side",
+        "new",
+        "--json",
+      ]);
+      expect(source.exitCode).toBe(0);
+      expect(JSON.parse(source.stdout).text).toContain("alpha = 20");
+      expect(JSON.parse(source.stdout).text).not.toContain("alpha = 30");
     } finally {
       rmSync(repoDir, { recursive: true, force: true });
     }

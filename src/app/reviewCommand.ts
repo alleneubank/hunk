@@ -412,15 +412,30 @@ function readStdin(): Promise<string> {
  * expression is kept verbatim rather than resolved — see `ReviewFocusTarget`.
  */
 function focusTargetOf(input: ReviewCommandInput["input"]): ReviewFocusTarget {
+  if (input.kind === "show") {
+    return {
+      kind: "show",
+      ...(input.ref ? { ref: input.ref } : {}),
+      ...(input.pathspecs ? { pathspecs: input.pathspecs } : {}),
+    };
+  }
+
+  if (input.kind === "stash-show") {
+    return { kind: "stash-show", ...(input.ref ? { ref: input.ref } : {}) };
+  }
+
   if (input.kind !== "vcs") {
     return { kind: "working-tree" };
   }
 
+  const pathspecs = input.pathspecs;
   if (input.range) {
-    return { kind: "range", expression: input.range };
+    return { kind: "range", expression: input.range, ...(pathspecs ? { pathspecs } : {}) };
   }
 
-  return input.staged ? { kind: "staged" } : { kind: "working-tree" };
+  return input.staged
+    ? { kind: "staged", ...(pathspecs ? { pathspecs } : {}) }
+    : { kind: "working-tree", ...(pathspecs ? { pathspecs } : {}) };
 }
 
 export async function runReviewCommand(

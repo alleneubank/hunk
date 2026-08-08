@@ -7,11 +7,13 @@ function focusPayload(overrides: Record<string, unknown> = {}): unknown {
 }
 
 suite("agent focus payloads", () => {
-  test("accepts the three targets Hunk can record", () => {
+  test("accepts every repo-backed target Hunk can record", () => {
     for (const target of [
       { kind: "working-tree" },
       { kind: "staged" },
       { kind: "range", expression: "main...HEAD" },
+      { kind: "show", ref: "HEAD", pathspecs: ["src"] },
+      { kind: "stash-show", ref: "stash@{1}" },
     ]) {
       assert.ok(isReviewFocusPayload(focusPayload({ target })));
     }
@@ -59,6 +61,12 @@ suite("recognizing the same changeset", () => {
         { kind: "range", expression: "main...HEAD" },
       ),
     );
+    assert.ok(
+      sameReviewTarget(
+        { kind: "show", ref: "HEAD", pathspecs: ["src"] },
+        { kind: "show", ref: "HEAD", pathspecs: ["src"] },
+      ),
+    );
   });
 
   test("separates targets that name different changesets", () => {
@@ -68,6 +76,17 @@ suite("recognizing the same changeset", () => {
         { kind: "range", expression: "main...HEAD" },
         { kind: "range", expression: "dev...HEAD" },
       ),
+      false,
+    );
+    assert.equal(
+      sameReviewTarget(
+        { kind: "show", ref: "HEAD", pathspecs: ["src"] },
+        { kind: "show", ref: "HEAD", pathspecs: ["docs"] },
+      ),
+      false,
+    );
+    assert.equal(
+      sameReviewTarget({ kind: "stash-show", ref: "stash@{1}" }, { kind: "stash-show" }),
       false,
     );
   });

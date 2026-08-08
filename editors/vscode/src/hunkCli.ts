@@ -7,7 +7,12 @@ import {
   readReviewPayload,
   type ReviewExport,
 } from "./reviewExport";
-import { targetArguments, WORKING_TREE_TARGET, type ReviewTarget } from "./reviewTarget";
+import {
+  targetArguments,
+  targetPathspecArguments,
+  WORKING_TREE_TARGET,
+  type ReviewTarget,
+} from "./reviewTarget";
 import { isReviewFocusPayload, type ReviewFocusPayload } from "./reviewFocus";
 
 /** Hard ceiling on one CLI call, so a wedged binary never hangs the extension host. */
@@ -224,7 +229,15 @@ export class HunkCli {
    */
   async fileSource(file: string, side: "old" | "new"): Promise<string | null> {
     const raw = await this.runReview(["file", "source", "--file", file, "--side", side]);
-    const payload: unknown = JSON.parse(raw);
+    let payload: unknown;
+    try {
+      payload = JSON.parse(raw);
+    } catch {
+      throw new HunkReviewError(
+        `Hunk returned output that is not JSON for ${file} (${side} side).`,
+        raw.slice(0, 400),
+      );
+    }
 
     // The whole envelope is validated, not just `text`. Null is a real answer here -- the
     // side does not exist -- so treating any unrecognized payload as null would report
@@ -236,7 +249,7 @@ export class HunkCli {
       (payload as { path?: unknown }).path !== file ||
       (payload as { side?: unknown }).side !== side
     ) {
-      throw new Error(`Hunk returned an unexpected response for ${file} (${side} side).`);
+      throw new HunkReviewError(`Hunk returned an unexpected response for ${file} (${side} side).`);
     }
 
     const text = (payload as { text?: unknown }).text;
@@ -248,7 +261,7 @@ export class HunkCli {
       return null;
     }
 
-    throw new Error(`Hunk returned no readable source for ${file} (${side} side).`);
+    throw new HunkReviewError(`Hunk returned no readable source for ${file} (${side} side).`);
   }
 
   /**
@@ -295,6 +308,7 @@ export class HunkCli {
             "--json",
             "--repo",
             this.options.repoRoot,
+            ...targetPathspecArguments(this.options.target ?? WORKING_TREE_TARGET),
           ],
           input,
         );

@@ -14,9 +14,9 @@ import { sameReviewTarget } from "./reviewFocus";
 import { ReviewSummaryView } from "./reviewSummaryView";
 import {
   isReviewableExpression,
+  parsePathspecInput,
   parseReviewTarget,
   targetLabel,
-  WORKING_TREE_TARGET,
   type ReviewTarget,
 } from "./reviewTarget";
 
@@ -27,6 +27,11 @@ const TARGET_MEMENTO_KEY = "hunkReview.target";
 
 /** Filename Hunk records an agent's pointer in, inside the repo's `.hunk/`. */
 const REVIEW_FOCUS_FILENAME = "review-focus.json";
+
+type PathspecReviewTarget = Extract<
+  ReviewTarget,
+  { kind: "working-tree" | "staged" | "range" | "show" }
+>;
 
 /** URI scheme serving reviewed file content from Hunk to the native diff editor. */
 const PRE_IMAGE_SCHEME = "hunk-review";
@@ -116,13 +121,15 @@ function sideOfHunkUri(uri: vscode.Uri): DiffSide {
 /**
  * The document one side of one file should be shown in.
  *
- * The new side of a live file is the real working-tree document, so the user edits code
- * rather than a copy. Everything else has no on-disk counterpart — the old side always, and
- * the new side of a deleted file — and is served from Hunk instead. Asking VS Code to open
- * a workspace file that a deletion removed just fails.
+ * The new side is editable only when the export says it is the live workspace. Historical
+ * and staged revisions have a real-looking "new" side too, but opening the workspace there
+ * would compare the requested revision against unrelated current files. Hunk remains the
+ * source of truth unless provenance explicitly grants the workspace side.
  */
 function documentUri(review: ActiveReview, file: ExportedFile, side: DiffSide): vscode.Uri {
-  return side === "new" && file.changeType !== "deleted"
+  return side === "new" &&
+    file.changeType !== "deleted" &&
+    review.session.export.sourceCapabilities?.new === "workspace"
     ? workspaceUri(review.session.reviewRoot(review.workspaceRoot), file.path)
     : hunkSourceUri(file.path, side);
 }
@@ -167,6 +174,16 @@ async function pickReviewTarget(current: ReviewTarget): Promise<ReviewTarget | u
         description: "any target `hunk diff` accepts",
         choice: "custom" as const,
       },
+      {
+        label: "Show a revision…",
+        description: "a committed snapshot, like `hunk show HEAD`",
+        choice: "show" as const,
+      },
+      {
+        label: "Show a stash entry…",
+        description: "a saved worktree snapshot",
+        choice: "stash-show" as const,
+      },
     ],
     { title: "Review", placeHolder: `Currently reviewing ${targetLabel(current)}` },
   );
@@ -175,8 +192,67 @@ async function pickReviewTarget(current: ReviewTarget): Promise<ReviewTarget | u
     return undefined;
   }
 
+  const pickPathspecs = async (
+    base: PathspecReviewTarget,
+  ): Promise<PathspecReviewTarget | undefined> => {
+    const value = await vscode.window.showInputBox({
+      title: "Limit paths (optional)",
+      prompt: "Space-separated pathspecs; quote paths containing spaces",
+      value: base.pathspecs?.join(" ") ?? "",
+      validateInput: (input) =>
+        input.trim().length === 0 || parsePathspecInput(input)
+          ? undefined
+          : "Enter valid space-separated pathspecs, or leave this blank.",
+    });
+
+    if (value === undefined) {
+      return undefined;
+    }
+
+    if (value.trim().length === 0) {
+      return base;
+    }
+
+    const pathspecs = parsePathspecInput(value);
+    if (!pathspecs) {
+      throw new HunkReviewError("The pathspec selection was not valid.");
+    }
+
+    return { ...base, pathspecs };
+  };
+
   if (picked.choice === "working-tree" || picked.choice === "staged") {
-    return picked.choice === "staged" ? { kind: "staged" } : WORKING_TREE_TARGET;
+    return pickPathspecs(
+      picked.choice === "staged" ? { kind: "staged" } : { kind: "working-tree" },
+    );
+  }
+
+  if (picked.choice === "show" || picked.choice === "stash-show") {
+    const stash = picked.choice === "stash-show";
+    const ref = await vscode.window.showInputBox({
+      title: stash ? "Show stash entry" : "Show revision",
+      prompt: stash ? "Stash ref (blank = latest)" : "Revision (blank = HEAD)",
+      value:
+        (stash && current.kind === "stash-show") || (!stash && current.kind === "show")
+          ? (current.ref ?? "")
+          : "",
+      validateInput: (value) =>
+        value.trim().length === 0 || isReviewableExpression(value)
+          ? undefined
+          : "Enter a revision. It cannot start with `-`.",
+    });
+
+    if (ref === undefined) {
+      return undefined;
+    }
+
+    const normalizedRef = ref.trim();
+    return stash
+      ? { kind: "stash-show", ...(normalizedRef ? { ref: normalizedRef } : {}) }
+      : pickPathspecs({
+          kind: "show",
+          ...(normalizedRef ? { ref: normalizedRef } : {}),
+        });
   }
 
   const branchComparison = picked.choice === "branch";
@@ -196,10 +272,10 @@ async function pickReviewTarget(current: ReviewTarget): Promise<ReviewTarget | u
 
   // Three dots, so a branch is compared against where it left its base rather than against
   // whatever that base has since become. That is the diff a pull request shows.
-  return {
+  return pickPathspecs({
     kind: "range",
     expression: branchComparison ? `${expression.trim()}...HEAD` : expression.trim(),
-  };
+  });
 }
 
 /** Refresh every surface from the session's current payload. */
@@ -537,7 +613,10 @@ export function activate(context: vscode.ExtensionContext): HunkReviewExtensionA
       ...(runnerOverride ? { run: runnerOverride } : {}),
     });
 
-    active?.comments.dispose();
+    // Load and validate the replacement before touching the current review. A failed target
+    // selection must leave the reviewer on the last known-good changeset, not on an empty
+    // sidebar with every comment controller already disposed.
+    const exported = await cli.export(false);
     const controller = vscode.comments.createCommentController("hunkReview", "Hunk Review");
     controller.commentingRangeProvider = {
       provideCommentingRanges: (document) => [
@@ -545,13 +624,16 @@ export function activate(context: vscode.ExtensionContext): HunkReviewExtensionA
       ],
     };
 
-    active = {
+    const next: ActiveReview = {
       cli,
       workspaceRoot,
       target,
-      session: new ReviewSession(cli, await cli.export(false)),
+      session: new ReviewSession(cli, exported),
       comments: new ReviewCommentSurface(controller, anchorUri),
     };
+    active?.comments.dispose();
+    active = next;
+    watchFocusRoot(active.session.reviewRoot(workspaceRoot));
     tree?.setSession(active.session);
     decorations?.setSession(active.session);
     // Drives the welcome view: an empty panel with no explanation is what a first-time
@@ -560,21 +642,54 @@ export function activate(context: vscode.ExtensionContext): HunkReviewExtensionA
     renderReview();
   };
 
+  /** Apply an agent's file pointer without turning a stale target into a hard failure. */
+  const openFocusedLocation = async (
+    path: string,
+    side: DiffSide,
+    line: number | undefined,
+  ): Promise<void> => {
+    const review = requireActive();
+    const isInReview = review.session.files.some((entry) => entry.file.path === path);
+    if (!isInReview) {
+      const action = await vscode.window.showWarningMessage(
+        `Focus points to \`${path}\`, but it is not part of the ${targetLabel(review.target)} review. Choose what to review to select another changeset.`,
+        "Choose what to review",
+      );
+      if (action === "Choose what to review") {
+        await vscode.commands.executeCommand("hunkReview.selectTarget");
+      }
+      return;
+    }
+
+    await vscode.commands.executeCommand("hunkReview.openFile", path);
+    await revealLine(path, side, line);
+  };
+
   context.subscriptions.push(
     vscode.commands.registerCommand("hunkReview.openReview", () =>
       guard(async () => {
         // An agent's standing instruction outranks the remembered target: it is the newer
         // statement of what this pair is reviewing, and it is why the file exists.
-        const pointed = await readStandingFocus();
-        await openReview(
-          pointed?.target ?? parseReviewTarget(context.workspaceState.get(TARGET_MEMENTO_KEY)),
-        );
+        const remembered = parseReviewTarget(context.workspaceState.get(TARGET_MEMENTO_KEY));
+        let pointed = await readStandingFocus();
+        await openReview(pointed?.target ?? remembered);
+
+        // A workspace may be a subdirectory of the repository. Once export has resolved the
+        // canonical root, check there too; this second probe only spawns Hunk when the file
+        // actually exists, preserving the cheap no-focus open path.
+        if (!pointed) {
+          pointed = await readStandingFocus(
+            requireActive().session.reviewRoot(resolveWorkspaceRoot()),
+          );
+          if (pointed && !sameReviewTarget(pointed.target, requireActive().target)) {
+            await openReview(pointed.target);
+          }
+        }
 
         if (pointed) {
           appliedFocusRevision = pointed.revision;
           if (pointed.file) {
-            await vscode.commands.executeCommand("hunkReview.openFile", pointed.file);
-            await revealLine(pointed.file, pointed.side ?? "new", pointed.line);
+            await openFocusedLocation(pointed.file, pointed.side ?? "new", pointed.line);
           }
         }
       }),
@@ -588,10 +703,12 @@ export function activate(context: vscode.ExtensionContext): HunkReviewExtensionA
           return;
         }
 
-        await context.workspaceState.update(TARGET_MEMENTO_KEY, target);
         // Reopened rather than refreshed: a different target is a different changeset, so
         // every anchor, viewed flag, and open diff belongs to a review that no longer exists.
         await openReview(target);
+        // Remember only a target that actually loaded. A failed replacement must not make the
+        // next open attempt resume a changeset the user never saw.
+        await context.workspaceState.update(TARGET_MEMENTO_KEY, target);
       }),
     ),
   );
@@ -609,6 +726,20 @@ export function activate(context: vscode.ExtensionContext): HunkReviewExtensionA
    * content, which a content comparison would correctly call unchanged.
    */
   let appliedFocusRevision: number | undefined;
+  let focusWatcher: vscode.FileSystemWatcher | undefined;
+
+  const watchFocusRoot = (root: string): void => {
+    focusWatcher?.dispose();
+    focusWatcher = vscode.workspace.createFileSystemWatcher(
+      // Hunk has already resolved the canonical root in the export. Watching that root keeps
+      // an opened subdirectory from missing an agent instruction stored at the repository root.
+      new vscode.RelativePattern(vscode.Uri.file(root), `.hunk/${REVIEW_FOCUS_FILENAME}`),
+    );
+    context.subscriptions.push(focusWatcher);
+    focusWatcher.onDidCreate(followFocus, undefined, context.subscriptions);
+    focusWatcher.onDidChange(followFocus, undefined, context.subscriptions);
+    focusWatcher.onDidDelete(followFocus, undefined, context.subscriptions);
+  };
 
   /**
    * Read the standing instruction before any review is open.
@@ -618,13 +749,12 @@ export function activate(context: vscode.ExtensionContext): HunkReviewExtensionA
    * and a repo with no focus is the ordinary case, so a failure here must never stop the
    * review from opening on the remembered target instead.
    */
-  const readStandingFocus = async () => {
+  const readStandingFocus = async (root = resolveWorkspaceRoot()) => {
     try {
-      const root = resolveWorkspaceRoot();
-
       // Existence first, then the CLI. Most repos are never pointed anywhere, and opening a
-      // review must not pay for a process spawn to learn that. Statting a path is not
-      // reading the schema, which stays Hunk's.
+      // review must not pay for a process spawn to learn that. Before export, the opened folder
+      // is the only root we can identify without parsing VCS state; after export the caller
+      // checks the canonical root Hunk reports.
       await vscode.workspace.fs.stat(
         vscode.Uri.joinPath(vscode.Uri.file(root), ".hunk", REVIEW_FOCUS_FILENAME),
       );
@@ -661,24 +791,9 @@ export function activate(context: vscode.ExtensionContext): HunkReviewExtensionA
       }
 
       if (focus.file) {
-        await vscode.commands.executeCommand("hunkReview.openFile", focus.file);
-        await revealLine(focus.file, focus.side ?? "new", focus.line);
+        await openFocusedLocation(focus.file, focus.side ?? "new", focus.line);
       }
     });
-
-  // Only where there is a folder to watch. `activate` runs before any review is opened, and
-  // an empty window is a legitimate state the extension must still start in.
-  const watchedFolder = vscode.workspace.workspaceFolders?.[0];
-  if (watchedFolder) {
-    const focusWatcher = vscode.workspace.createFileSystemWatcher(
-      // Watched by path rather than parsed here: knowing where the file lives is not the
-      // same as owning its schema, which stays Hunk's (REQ-VSCODE-007).
-      new vscode.RelativePattern(watchedFolder, `.hunk/${REVIEW_FOCUS_FILENAME}`),
-    );
-    context.subscriptions.push(focusWatcher);
-    focusWatcher.onDidCreate(followFocus, undefined, context.subscriptions);
-    focusWatcher.onDidChange(followFocus, undefined, context.subscriptions);
-  }
 
   context.subscriptions.push(
     vscode.commands.registerCommand("hunkReview.followFocus", followFocus),

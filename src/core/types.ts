@@ -7,6 +7,7 @@ import type {
   ExtensionVcsDiffInput,
   ExtensionVcsShowInput,
   ExtensionVcsStashShowInput,
+  ExtensionVcsSourceCapabilities,
   NamedCustomThemeConfig,
 } from "../extension-api/types";
 import type { FileSourceFetcher } from "./fileSource";
@@ -82,6 +83,8 @@ export interface Changeset {
   title: string;
   summary?: string;
   agentSummary?: string;
+  /** Source provenance for editor clients when the VCS adapter can provide it. */
+  sourceCapabilities?: ExtensionVcsSourceCapabilities;
   files: DiffFile[];
 }
 

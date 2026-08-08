@@ -9,15 +9,17 @@ const REVIEW_FOCUS_VERSION = 1;
 /**
  * The changeset a paired reviewer should be looking at.
  *
- * The same three cases the editor client offers, so an agent names a target the way a human
- * would pick one. A range carries its expression verbatim rather than anything resolved:
- * Hunk owns ref resolution, and a focus recorded as a commit id would still point at the
- * old changeset after the branch moves.
+ * The same repo-backed cases the editor client offers, so an agent names a target the way a
+ * human would pick one. Revision expressions and pathspecs remain unresolved: Hunk owns ref
+ * resolution, and a focus recorded as a commit id would still point at the old changeset
+ * after the branch moves.
  */
 export type ReviewFocusTarget =
-  | { kind: "working-tree" }
-  | { kind: "staged" }
-  | { kind: "range"; expression: string };
+  | { kind: "working-tree"; pathspecs?: string[] }
+  | { kind: "staged"; pathspecs?: string[] }
+  | { kind: "range"; expression: string; pathspecs?: string[] }
+  | { kind: "show"; ref?: string; pathspecs?: string[] }
+  | { kind: "stash-show"; ref?: string };
 
 /**
  * Where an agent is pointing its human partner.
@@ -59,13 +61,34 @@ function isReviewFocusTarget(value: unknown): value is ReviewFocusTarget {
     return false;
   }
 
+  if (
+    value.pathspecs !== undefined &&
+    (!Array.isArray(value.pathspecs) ||
+      value.pathspecs.length === 0 ||
+      value.pathspecs.some(
+        (pathspec) => typeof pathspec !== "string" || pathspec.trim().length === 0,
+      ))
+  ) {
+    return false;
+  }
+
   if (value.kind === "working-tree" || value.kind === "staged") {
     return true;
   }
 
-  return (
-    value.kind === "range" && typeof value.expression === "string" && value.expression.length > 0
-  );
+  if (value.kind === "range") {
+    return typeof value.expression === "string" && value.expression.length > 0;
+  }
+
+  if (value.kind === "show" || value.kind === "stash-show") {
+    if (value.kind === "stash-show" && value.pathspecs !== undefined) {
+      return false;
+    }
+
+    return value.ref === undefined || (typeof value.ref === "string" && value.ref.length > 0);
+  }
+
+  return false;
 }
 
 /** Validate the whole persisted schema; a partial match is treated as no focus at all. */

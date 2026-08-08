@@ -414,6 +414,7 @@ async function loadVcsChangeset(
   return {
     changeset: {
       ...parsedChangeset,
+      sourceCapabilities: result.sourceCapabilities,
       files: [...parsedChangeset.files, ...adapterFiles],
     } satisfies Changeset,
     repoRoot: result.repoRoot,

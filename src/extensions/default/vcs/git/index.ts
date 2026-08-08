@@ -288,11 +288,16 @@ export const GitVcsAdapter = {
           runGitText({ input, args: buildGitDiffNumstatArgs(input), cwd, gitExecutable }),
         ).filter((file) => shouldSkipLargeTrackedDiff(file, repoRoot));
         const colorMoved = resolveGitColorMovedOptions(input, { cwd, gitExecutable });
+        const endpoints = resolveGitDiffEndpoints(input, { cwd, repoRoot, gitExecutable });
 
         return {
           repoRoot,
           sourceLabel: repoRoot,
           title,
+          sourceCapabilities: {
+            old: "hunk" as const,
+            new: endpoints?.new.kind === "worktree" ? ("workspace" as const) : ("hunk" as const),
+          },
           patchText: runGitText({
             input,
             args: buildGitDiffArgs(
@@ -354,6 +359,7 @@ export const GitVcsAdapter = {
           repoRoot,
           sourceLabel: repoRoot,
           title: input.ref ? `${repoName} show ${input.ref}` : `${repoName} show HEAD`,
+          sourceCapabilities: { old: "hunk", new: "hunk" },
           patchText: runGitText({
             input,
             args: buildGitShowArgs(
@@ -393,6 +399,7 @@ export const GitVcsAdapter = {
           repoRoot,
           sourceLabel: repoRoot,
           title: input.ref ? `${repoName} stash ${input.ref}` : `${repoName} stash`,
+          sourceCapabilities: { old: "hunk", new: "hunk" },
           patchText: runGitText({
             input,
             args: buildGitStashShowArgs(

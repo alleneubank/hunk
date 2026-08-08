@@ -195,6 +195,10 @@ export const CLI_REFERENCE_COMMANDS = {
     options: [
       ...DIFF_OPTIONS,
       { flag: "--json", description: "emit structured JSON (the only supported format)" },
+      {
+        flag: "--source <source>",
+        description: "repo-backed source: diff, show, or stash-show (default: diff)",
+      },
       { flag: "--include-patch", description: "export: include raw unified patch text per file" },
       {
         flag: "--repo <path>",
@@ -734,7 +738,8 @@ async function parseDiffCommand(tokens: string[], argv: string[]): Promise<Parse
 }
 
 /**
- * Review-command flags, peeled off before range selection is delegated to `hunk diff`.
+ * Review-command flags, peeled off before target selection is delegated to the canonical
+ * `hunk diff`, `hunk show`, or `hunk stash show` parser.
  *
  * Value flags collect every occurrence rather than keeping the last one. Overwriting made
  * `--file a --file b` mark only `b` and say nothing about `a`, which is the worst kind of
@@ -864,18 +869,26 @@ function requireReviewSide(flags: ReviewFlags) {
 
 /** Value-taking flags for every `hunk review` subcommand, keyed by subcommand path. */
 const REVIEW_VALUE_FLAGS: Record<string, ReadonlySet<string>> = {
-  export: new Set(["--repo"]),
-  "comment add": new Set(["--repo", "--file", "--side", "--line", "--body", "--author"]),
-  "comment reply": new Set(["--repo", "--file", "--id", "--body", "--author"]),
-  "comment status": new Set(["--repo", "--file", "--id", "--status"]),
-  "comment delete": new Set(["--repo", "--file", "--id"]),
-  "note reply": new Set(["--repo", "--file", "--note", "--body", "--author"]),
-  "note status": new Set(["--repo", "--file", "--note", "--status"]),
-  "viewed set": new Set(["--repo", "--file"]),
-  "file source": new Set(["--repo", "--file", "--side"]),
-  "focus set": new Set(["--repo", "--file", "--side", "--line"]),
-  "focus get": new Set(["--repo"]),
-  "focus clear": new Set(["--repo"]),
+  export: new Set(["--repo", "--source"]),
+  "comment add": new Set([
+    "--repo",
+    "--source",
+    "--file",
+    "--side",
+    "--line",
+    "--body",
+    "--author",
+  ]),
+  "comment reply": new Set(["--repo", "--source", "--file", "--id", "--body", "--author"]),
+  "comment status": new Set(["--repo", "--source", "--file", "--id", "--status"]),
+  "comment delete": new Set(["--repo", "--source", "--file", "--id"]),
+  "note reply": new Set(["--repo", "--source", "--file", "--note", "--body", "--author"]),
+  "note status": new Set(["--repo", "--source", "--file", "--note", "--status"]),
+  "viewed set": new Set(["--repo", "--source", "--file"]),
+  "file source": new Set(["--repo", "--source", "--file", "--side"]),
+  "focus set": new Set(["--repo", "--source", "--file", "--side", "--line"]),
+  "focus get": new Set(["--repo", "--source"]),
+  "focus clear": new Set(["--repo", "--source"]),
 };
 
 /** Review subcommands whose first token is a group name rather than the action. */
@@ -1032,10 +1045,10 @@ function buildReviewOperation(subcommand: string, flags: ReviewFlags): ReviewOpe
 /**
  * Parse the `hunk review` command group, the headless surface editor clients drive.
  *
- * Every subcommand shares one shape: export-side flags peeled off, then range selection
- * handed to `hunk diff`'s parser verbatim. A client that can name a changeset for `export`
- * names the same one for a comment, so the anchor a comment is written against is the
- * anchor the next export resolves.
+ * Every subcommand shares one shape: review flags peeled off, then the selected repo-backed
+ * target is handed to the same parser as its interactive command. A client that can name a
+ * changeset for `export` names the same one for a comment, so the anchor a comment is written
+ * against is the anchor the next export resolves.
  */
 async function parseReviewCommand(tokens: string[], argv: string[]): Promise<ParsedCliInput> {
   const { commandTokens, pathspecs } = splitPathspecArgs(tokens);
@@ -1070,14 +1083,24 @@ async function parseReviewCommand(tokens: string[], argv: string[]): Promise<Par
   const operation = buildReviewOperation(subcommand, flags);
   const repo = optionalReviewFlag(flags, "--repo");
 
-  // Range selection is `hunk diff`'s, verbatim: a headless review must describe exactly the
-  // changeset the interactive command would have opened for the same arguments.
-  const parsed = await parseDiffCommand(
-    pathspecs.length > 0 ? [...diffTokens, "--", ...pathspecs] : diffTokens,
-    argv,
-  );
+  const source = optionalReviewFlag(flags, "--source") ?? "diff";
+  if (source !== "diff" && source !== "show" && source !== "stash-show") {
+    throw new Error("`--source` must be `diff`, `show`, or `stash-show`.");
+  }
 
-  if (parsed.kind !== "vcs") {
+  const targetTokens = pathspecs.length > 0 ? [...diffTokens, "--", ...pathspecs] : diffTokens;
+  const parsed =
+    source === "diff"
+      ? await parseDiffCommand(targetTokens, argv)
+      : source === "show"
+        ? await parseShowCommand(targetTokens, argv)
+        : pathspecs.length > 0
+          ? (() => {
+              throw new Error("`hunk review --source stash-show` does not accept pathspecs.");
+            })()
+          : await parseStashCommand(["show", ...diffTokens], argv);
+
+  if (parsed.kind !== "vcs" && parsed.kind !== "show" && parsed.kind !== "stash-show") {
     throw new Error(
       "`hunk review` operates on a repository target. Use `hunk review <subcommand> [target] [-- <pathspec...>]`.",
     );

@@ -7,10 +7,12 @@ import {
   listSlUntrackedFiles,
   resolveSlRepoRoot,
   runSlText,
+  type SlBackedInput,
 } from "../../../../core/vcs/sapling";
 import {
   HUNK_CORE_VCS_DETECTION_PRIORITY,
   type ExtensionVcsAdapter,
+  type ExtensionVcsFileSourceReader,
   type HunkExtensionAPI,
 } from "../../../../extension-api/types";
 
@@ -65,6 +67,37 @@ function statSignature(path: string) {
   return `${path}:${stat.size}:${stat.mtimeMs}:${stat.ino}`;
 }
 
+/** Read the exact parent/revision pair represented by a Sapling diff. */
+function createSlSourceReader(
+  input: SlBackedInput,
+  cwd: string,
+  repoRoot: string,
+): ExtensionVcsFileSourceReader {
+  const newRevision = input.kind === "show" ? (input.ref ?? ".") : (input.range ?? ".");
+  const oldRevision = input.kind === "show" ? `${newRevision}^` : ".";
+
+  return async ({ path, previousPath, changeType, side }) => {
+    if ((changeType === "new" && side === "old") || (changeType === "deleted" && side === "new")) {
+      return null;
+    }
+
+    const sourcePath = side === "old" ? (previousPath ?? path) : path;
+    if (input.kind === "vcs" && !input.range && side === "new") {
+      try {
+        return await fs.promises.readFile(join(repoRoot, sourcePath), "utf8");
+      } catch {
+        return null;
+      }
+    }
+
+    return runSlText({
+      input,
+      args: ["cat", "-r", side === "old" ? oldRevision : newRevision, "--", sourcePath],
+      cwd,
+    });
+  };
+}
+
 /** VCS adapter translating neutral review operations to Sapling commands. */
 export const SaplingVcsAdapter = {
   id: "sl",
@@ -87,6 +120,11 @@ export const SaplingVcsAdapter = {
           title: input.range ? `${repoName} ${input.range}` : `${repoName} working copy`,
           patchText: runSlText({ input, args: buildSlDiffArgs(input), cwd }),
           untrackedPaths: listSlUntrackedFiles(input, { cwd, repoRoot }),
+          sourceCapabilities: {
+            old: "hunk" as const,
+            new: input.range ? ("hunk" as const) : ("workspace" as const),
+          },
+          readFileSource: createSlSourceReader(input, cwd, repoRoot),
         };
       },
       watchSignature(input, { cwd }) {
@@ -108,6 +146,8 @@ export const SaplingVcsAdapter = {
           sourceLabel: repoRoot,
           title: `${repoName} show ${revset}`,
           patchText: runSlText({ input, args: buildSlShowArgs(input), cwd }),
+          sourceCapabilities: { old: "hunk" as const, new: "hunk" as const },
+          readFileSource: createSlSourceReader(input, cwd, repoRoot),
         };
       },
       watchSignature(input, { cwd }) {

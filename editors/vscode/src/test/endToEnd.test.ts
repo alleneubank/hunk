@@ -51,11 +51,16 @@ async function extensionApi(): Promise<HunkReviewExtensionApi> {
  * is returned on timeout, which keeps the caller's assertion the thing that reports the
  * mismatch.
  */
-async function readPreImage(path: string, expected: string, attemptsMax = 60): Promise<string> {
+async function readSource(
+  path: string,
+  side: "old" | "new",
+  expected: string,
+  attemptsMax = 60,
+): Promise<string> {
   // The side belongs in the URI: it is what the provider reads, and it is what the
   // extension invalidates. A query-less URI would be a different document that never
   // refreshes.
-  const uri = vscode.Uri.from({ scheme: "hunk-review", path: `/${path}`, query: "side=old" });
+  const uri = vscode.Uri.from({ scheme: "hunk-review", path: `/${path}`, query: `side=${side}` });
   let text = "";
 
   for (let attempt = 0; attempt < attemptsMax; attempt += 1) {
@@ -71,10 +76,31 @@ async function readPreImage(path: string, expected: string, attemptsMax = 60): P
   return text;
 }
 
+async function readPreImage(path: string, expected: string, attemptsMax = 60): Promise<string> {
+  return readSource(path, "old", expected, attemptsMax);
+}
+
 function currentReview(api: HunkReviewExtensionApi): ReviewExport {
   const active = api.__getActiveReviewForTests();
   assert.ok(active, "expected an open review");
   return active.session.export;
+}
+
+/** Drive the real target picker without letting a test depend on QuickPick timing. */
+async function selectTarget(choice: string, inputs: string[] = []): Promise<void> {
+  const originalQuickPick = vscode.window.showQuickPick;
+  const originalInput = vscode.window.showInputBox;
+  const remaining = [...inputs];
+  (vscode.window as { showQuickPick: unknown }).showQuickPick = () => Promise.resolve({ choice });
+  (vscode.window as { showInputBox: unknown }).showInputBox = () =>
+    Promise.resolve(remaining.shift() ?? "");
+
+  try {
+    await vscode.commands.executeCommand("hunkReview.selectTarget");
+  } finally {
+    (vscode.window as { showQuickPick: unknown }).showQuickPick = originalQuickPick;
+    (vscode.window as { showInputBox: unknown }).showInputBox = originalInput;
+  }
 }
 
 suite("end to end against the real hunk binary", function () {
@@ -222,6 +248,81 @@ suite("end to end against the real hunk binary", function () {
       commentId: outdated[0]?.id,
     });
     assert.deepEqual(currentReview(api).comments["alpha.ts"] ?? [], []);
+  });
+
+  test("the real extension preserves every repo-backed target and source side", async () => {
+    const api = await extensionApi();
+    let historicalCommitCreated = false;
+
+    // The preceding round-trip test intentionally leaves its working copy changed to prove
+    // outdated comments. Re-establish the suite fixture before this independent operation
+    // matrix starts.
+    git("stash", "clear");
+    git("reset", "--hard", "HEAD");
+    writeFileSync(join(workspaceRoot, "alpha.ts"), "export const alpha = 10;\n");
+
+    try {
+      // Working tree: the new side is the editable workspace file.
+      await vscode.commands.executeCommand("hunkReview.openReview");
+      assert.equal(currentReview(api).sourceCapabilities?.new, "workspace");
+
+      // Staged: index content must win over a different dirty workspace value.
+      git("add", "alpha.ts");
+      writeFileSync(join(workspaceRoot, "alpha.ts"), "export const alpha = 30;\n");
+      await selectTarget("staged");
+      assert.equal(currentReview(api).sourceCapabilities?.new, "hunk");
+      await vscode.commands.executeCommand("hunkReview.openFile", "alpha.ts");
+      assert.equal(
+        await readSource("alpha.ts", "new", "export const alpha = 10;\n"),
+        "export const alpha = 10;\n",
+      );
+
+      // Create one historical commit and leave a different dirty workspace value behind.
+      git("reset", "--", "alpha.ts");
+      writeFileSync(join(workspaceRoot, "alpha.ts"), "export const alpha = 20;\n");
+      git("add", "alpha.ts");
+      git("commit", "-m", "historical review fixture");
+      historicalCommitCreated = true;
+      writeFileSync(join(workspaceRoot, "alpha.ts"), "export const alpha = 99;\n");
+
+      await selectTarget("show", ["HEAD", ""]);
+      assert.equal(currentReview(api).review.inputKind, "show");
+      assert.equal(currentReview(api).sourceCapabilities?.new, "hunk");
+      await vscode.commands.executeCommand("hunkReview.openFile", "alpha.ts");
+      assert.equal(
+        await readSource("alpha.ts", "new", "export const alpha = 20;\n"),
+        "export const alpha = 20;\n",
+      );
+
+      await selectTarget("custom", ["HEAD~1..HEAD", ""]);
+      assert.equal(currentReview(api).review.inputKind, "vcs");
+      assert.equal(currentReview(api).sourceCapabilities?.new, "hunk");
+      await vscode.commands.executeCommand("hunkReview.openFile", "alpha.ts");
+      assert.equal(
+        await readSource("alpha.ts", "old", "export const alpha = 1;\n"),
+        "export const alpha = 1;\n",
+      );
+      assert.equal(
+        await readSource("alpha.ts", "new", "export const alpha = 20;\n"),
+        "export const alpha = 20;\n",
+      );
+
+      writeFileSync(join(workspaceRoot, "alpha.ts"), "export const alpha = 40;\n");
+      git("stash", "push", "-m", "operation matrix fixture");
+      await selectTarget("stash-show");
+      assert.equal(currentReview(api).review.inputKind, "stash-show");
+      assert.equal(currentReview(api).sourceCapabilities?.new, "hunk");
+      await vscode.commands.executeCommand("hunkReview.openFile", "alpha.ts");
+      assert.equal(
+        await readSource("alpha.ts", "new", "export const alpha = 40;\n"),
+        "export const alpha = 40;\n",
+      );
+    } finally {
+      // Leave the shared fixture exactly as the following real-binary test expects it.
+      git("stash", "clear");
+      git("reset", "--hard", historicalCommitCreated ? "HEAD~1" : "HEAD");
+      writeFileSync(join(workspaceRoot, "alpha.ts"), "export const alpha = 10;\n");
+    }
   });
 
   test("a failure from the real binary reaches the user as its own message", async () => {

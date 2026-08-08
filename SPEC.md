@@ -224,6 +224,23 @@ note reply` and `note status` open that conversation on first use — the first 
   JSON, with nothing in the exit code or stderr to explain it. This binds every headless
   command, not only export: the same entrypoint prints session snapshots and pager
   passthrough.
+- **REQ-EXPORT-014** — The headless review target preserves the selected repo-backed
+  operation: `diff` (the default, including working tree, staged, range, and pathspec
+  selection), `show`, or `stash-show`. A `show` target has the same meaning as `hunk show`,
+  and a `stash-show` target has the same meaning as `hunk stash show`; a bare revision is
+  never silently rewritten into a diff target. The operation is shared by export, writes,
+  file-source reads, and focus.
+- **REQ-EXPORT-015** — The export reports source provenance for each side of the review:
+  the old side is Hunk-served, and the new side is explicitly either the live workspace or
+  Hunk-served historical/index content. A client chooses a workspace document only when the
+  payload says the new side is live; it never infers that fact from a revision expression.
+- **REQ-EXPORT-016** — Pathspecs are parsed once before the target operation and remain
+  unchanged across export, comments, viewed writes, file-source reads, and focus. A
+  pathspec-scoped review never expands to the unscoped changeset because a client omitted
+  the separator or reconstructed the target differently.
+- **REQ-EXPORT-017** — An export and every post-write review envelope carry the same
+  operation metadata and source provenance, so an editor can display what it is reading and
+  verify that a write returned the review it addressed.
 
 ### Review write commands
 
@@ -285,9 +302,10 @@ capture and REQ-REVIEW-008's merge.
 - **REQ-VSCODE-008** — Anything anchored to a line is placed on the side it was resolved
   against: an old-side comment, and an agent note carrying only an old range, appear in the
   pre-image document. The same line number on the other side is a different line.
-- **REQ-VSCODE-009** — Both sides of the diff are served from Hunk when they have no
-  working-tree document — the old side always, and the new side of a deleted file. Only a
-  live file's new side is the real editable workspace document.
+- **REQ-VSCODE-009** — Both sides of the diff are served from Hunk whenever export provenance
+  says the selected source is not the live workspace — the old side always, and the new side
+  for staged, historical, range, stash, deleted, and adapter-backed reviews. Only a live
+  working-tree file's new side is the real editable workspace document.
 - **REQ-VSCODE-010** — Reviewed paths resolve against the repo root the export reports, not
   the folder VS Code has open, so reviewing from a subdirectory of a repository works.
 - **REQ-VSCODE-012** — The reviewer chooses which changeset is under review — working tree,
@@ -349,6 +367,28 @@ capture and REQ-REVIEW-008's merge.
   are anchored to one URI; VS Code's Comments panel opens that URI alone, which would otherwise
   drop the change context the comment or agent note is about. An open that is already a
   side-by-side diff is left alone, so navigation inside the review does not re-open the pair.
+- **REQ-VSCODE-023** — The extension offers the repo-backed operations Hunk can review:
+  working tree, staged changes, diff ranges, revisions, stash entries, and pathspec-scoped
+  targets. It persists the discriminated target and repeats it verbatim for every read and
+  write. The picker distinguishes a revision show from a diff range.
+- **REQ-VSCODE-024** — The extension selects the old and new document URIs from Hunk's
+  exported source provenance. Staged and historical/range new sides are Hunk-served even
+  when a workspace file with the same path exists; only a live workspace new side is opened
+  as the editable workspace document. Deleted and added sides continue to follow
+  `changeType`.
+- **REQ-VSCODE-025** — The extension accepts and displays a pathspec-scoped review without
+  reading Git or widening the target. All Hunk calls for the active review carry the same
+  pathspec list, including comments, viewed state, focus, and file-source requests.
+- **REQ-VSCODE-026** — The extension rejects malformed review payloads and malformed source
+  responses before rendering them, with an actionable error and no partial review. Version
+  compatibility remains fail-closed; absent optional fields retain only explicitly documented
+  backward-compatible defaults.
+- **REQ-VSCODE-027** — Replacing an active target is transactional: the current review,
+  comment controller, decorations, and open state remain usable until the replacement export
+  succeeds. A failed target does not strand the reviewer in a half-disposed review.
+- **REQ-VSCODE-028** — Focus watching resolves the canonical repository root reported by Hunk
+  and accepts every focus target shape the CLI can persist. Opening a workspace subdirectory
+  does not make focus changes unreachable.
 
 ## Invariants
 
@@ -366,6 +406,10 @@ capture and REQ-REVIEW-008's merge.
 - **Export is read-only** with respect to `.hunk/`.
 - **No new required runtime.** Nothing on this path requires the daemon, a registered
   session, or a TTY.
+- **Source identity is explicit.** A client never treats a path's presence in the workspace
+  as proof that it is the selected review's new side.
+- **Target identity is stable.** Operation, target expression, and pathspecs are one request
+  and cannot drift between the payload on screen and a subsequent write.
 
 ## Non-goals
 
@@ -383,6 +427,9 @@ capture and REQ-REVIEW-008's merge.
   progress into a lie. (2026-08-03, ratified.)
 - Publishing review comments to GitHub or any forge.
 - STML / Pierre note geometry in VS Code. Comment bodies are markdown there.
+- Patch files, plain-text pager passthrough, direct file comparison, and difftool editor
+  surfaces are not part of the repo-backed campaign until the CLI defines a headless source
+  and review-state contract for them.
 - Publishing the `packages/session-broker*` packages.
 
 ## Decisions
@@ -444,6 +491,13 @@ capture and REQ-REVIEW-008's merge.
   CLI-as-API works with any agent that can run a shell command. The focus expression is
   stored unresolved, the revision is monotonic, and the write lands by atomic rename.
   (2026-08-03, ratified.)
+- Repo-backed editor parity uses an explicit review source selector rather than treating
+  every target as `hunk diff`: this preserves `hunk show`/`hunk stash show` semantics and lets
+  the VCS loader remain the owner of exact old/new source reads. (`2026-08-08`, provisional.)
+- Patch, pager, direct file comparison, and difftool are deferred from the VS Code client
+  until a headless payload can define source reads and the meaning of local review state for
+  inputs without a repository root. The extension must report that boundary explicitly rather
+  than silently opening a working-tree review. (`2026-08-08`, provisional.)
 - Replies are a second comment shape in the same store, discriminated by `parentId`, rather
   than a nested array on the root or a grouping derived from `(file, side, line)`. Grouping
   by line conflates two people commenting on one line with a conversation, and splits a
@@ -637,10 +691,32 @@ not a reason to hold the surface.
       reply rather than a second root —
       `editors/vscode/src/test/review.test.ts` "a comment and its replies render as one
       conversation", "replying answers the conversation instead of opening a new one"
+- [x] `hunk review export` preserves explicit `diff`, `show`, and `stash-show` operations,
+      including pathspecs, and every review write/file-source/focus request repeats the same
+      target — `test/cli/review.test.ts`, `editors/vscode/src/test/reviewTarget.test.ts`
+- [x] Export reports whether the new side is the live workspace or Hunk-served historical or
+      index content, and a staged/range/show review never reads the workspace as its new side
+      — `editors/vscode/src/test/review.test.ts`, `editors/vscode/src/test/endToEnd.test.ts`
+- [x] The extension offers distinct revision, stash, range, staged, working-tree, and
+      pathspec-scoped targets, persists them, and carries them on all reads and writes —
+      `editors/vscode/src/test/reviewTarget.test.ts`, `editors/vscode/src/test/review.test.ts`
+- [x] A malformed export or file-source payload fails closed before any partial review is
+      rendered — `editors/vscode/src/test/reviewExport.test.ts`,
+      `editors/vscode/src/test/review.test.ts`
+- [x] A failed target replacement leaves the existing review and comment controller usable,
+      and focus changes remain reachable when VS Code opens a repository subdirectory —
+      `editors/vscode/src/test/review.test.ts`, `editors/vscode/src/test/reviewFocus.test.ts`
 
 Still owed to the human (Boundary): the feel judgement on the finished VS Code surface,
 and any publish.
 
 ## Test traceability
 
-Added during TDD; empty at authoring.
+- `REQ-EXPORT-014`/`015`/`016`/`017` → `src/core/cli.ts`, `src/core/reviewExport.ts`,
+  `src/extensions/default/vcs/{git,jujutsu,sapling}/`, `test/cli/review.test.ts`.
+- `REQ-VSCODE-023`/`024`/`025` → `editors/vscode/src/reviewTarget.ts`, `hunkCli.ts`,
+  `extension.ts`, `editors/vscode/src/test/reviewTarget.test.ts`, `endToEnd.test.ts`.
+- `REQ-VSCODE-026` → `editors/vscode/src/reviewExport.ts`, `hunkCli.ts`,
+  `editors/vscode/src/test/reviewExport.test.ts`, `review.test.ts`.
+- `REQ-VSCODE-027`/`028` → `editors/vscode/src/extension.ts`, `reviewFocus.ts`,
+  `editors/vscode/src/test/review.test.ts`, `reviewFocus.test.ts`.

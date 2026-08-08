@@ -15,6 +15,14 @@ export type ReviewCommentStatus = "active" | "resolved";
 /** Which side of the diff something is anchored to. */
 export type DiffSide = "old" | "new";
 
+/** Whether one side can be opened as an editable workspace document. */
+export type ReviewSourceKind = "hunk" | "workspace";
+
+export interface ReviewSourceCapabilities {
+  old: "hunk";
+  new: ReviewSourceKind;
+}
+
 export interface ExportedHunk {
   index: number;
   header?: string;
@@ -111,9 +119,12 @@ export interface ReviewExport {
   exportVersion: number;
   reviewCommentsVersion: number;
   repoRoot: string | null;
+  /** Omitted by older Hunk binaries; those payloads are safest when both sides use Hunk. */
+  sourceCapabilities?: ReviewSourceCapabilities;
   review: {
     title?: string;
     sourceLabel?: string;
+    inputKind?: "vcs" | "show" | "stash-show";
     /** The sidecar's account of what this whole change does, when one was authored. */
     agentSummary?: string;
     files: ExportedFile[];
@@ -138,6 +149,164 @@ export class HunkReviewError extends Error {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+const CHANGE_TYPES = new Set<ExportedChangeType>([
+  "change",
+  "rename-pure",
+  "rename-changed",
+  "new",
+  "deleted",
+]);
+
+const NOTE_SOURCES = new Set(["ai", "agent", "user"]);
+
+function malformed(field: string): never {
+  throw new HunkReviewError("Hunk returned a malformed review payload.", `Invalid ${field}.`);
+}
+
+function requireRecord(value: unknown, field: string): Record<string, unknown> {
+  return isRecord(value) ? value : malformed(field);
+}
+
+function requireString(value: unknown, field: string): string {
+  return typeof value === "string" ? value : malformed(field);
+}
+
+function optionalString(value: unknown, field: string): void {
+  if (value !== undefined && typeof value !== "string") {
+    malformed(field);
+  }
+}
+
+function requireInteger(value: unknown, field: string, minimum = 0): void {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < minimum) {
+    malformed(field);
+  }
+}
+
+function optionalInteger(value: unknown, field: string, minimum = 0): void {
+  if (value !== undefined) {
+    requireInteger(value, field, minimum);
+  }
+}
+
+function optionalRange(value: unknown, field: string): void {
+  if (value === undefined) {
+    return;
+  }
+
+  if (
+    !Array.isArray(value) ||
+    value.length !== 2 ||
+    value.some((entry) => typeof entry !== "number" || !Number.isInteger(entry) || entry < 0)
+  ) {
+    malformed(field);
+  }
+}
+
+function validateHunk(value: unknown, index: number): void {
+  const hunk = requireRecord(value, `review.files[${index}].hunks`);
+  requireInteger(hunk.index, `review.files[${index}].hunks.index`);
+  optionalString(hunk.header, `review.files[${index}].hunks.header`);
+  optionalInteger(hunk.oldStart, `review.files[${index}].hunks.oldStart`);
+  optionalInteger(hunk.oldLines, `review.files[${index}].hunks.oldLines`);
+  optionalInteger(hunk.newStart, `review.files[${index}].hunks.newStart`);
+  optionalInteger(hunk.newLines, `review.files[${index}].hunks.newLines`);
+  optionalRange(hunk.oldRange, `review.files[${index}].hunks.oldRange`);
+  optionalRange(hunk.newRange, `review.files[${index}].hunks.newRange`);
+}
+
+function validateFile(value: unknown, index: number): void {
+  const file = requireRecord(value, `review.files[${index}]`);
+  requireString(file.id, `review.files[${index}].id`);
+  requireString(file.path, `review.files[${index}].path`);
+  optionalString(file.previousPath, `review.files[${index}].previousPath`);
+  requireInteger(file.additions, `review.files[${index}].additions`);
+  requireInteger(file.deletions, `review.files[${index}].deletions`);
+  requireInteger(file.hunkCount, `review.files[${index}].hunkCount`);
+  if (
+    file.changeType !== undefined &&
+    (typeof file.changeType !== "string" ||
+      !CHANGE_TYPES.has(file.changeType as ExportedChangeType))
+  ) {
+    malformed(`review.files[${index}].changeType`);
+  }
+  optionalString(file.agentSummary, `review.files[${index}].agentSummary`);
+  if (!Array.isArray(file.hunks)) {
+    malformed(`review.files[${index}].hunks`);
+  }
+  file.hunks.forEach((hunk, hunkIndex) => validateHunk(hunk, hunkIndex));
+  optionalString(file.patch, `review.files[${index}].patch`);
+}
+
+function validateNote(value: unknown, index: number): void {
+  const note = requireRecord(value, `review.reviewNotes[${index}]`);
+  requireString(note.noteId, `review.reviewNotes[${index}].noteId`);
+  requireString(note.noteKey, `review.reviewNotes[${index}].noteKey`);
+  if (typeof note.source !== "string" || !NOTE_SOURCES.has(note.source)) {
+    malformed(`review.reviewNotes[${index}].source`);
+  }
+  requireString(note.filePath, `review.reviewNotes[${index}].filePath`);
+  optionalInteger(note.hunkIndex, `review.reviewNotes[${index}].hunkIndex`);
+  optionalRange(note.oldRange, `review.reviewNotes[${index}].oldRange`);
+  optionalRange(note.newRange, `review.reviewNotes[${index}].newRange`);
+  requireString(note.body, `review.reviewNotes[${index}].body`);
+  optionalString(note.title, `review.reviewNotes[${index}].title`);
+  optionalString(note.author, `review.reviewNotes[${index}].author`);
+  requireString(note.createdAt, `review.reviewNotes[${index}].createdAt`);
+  optionalString(note.updatedAt, `review.reviewNotes[${index}].updatedAt`);
+  if (typeof note.editable !== "boolean") {
+    malformed(`review.reviewNotes[${index}].editable`);
+  }
+}
+
+function validateReply(value: unknown, field: string): void {
+  const reply = requireRecord(value, field);
+  requireString(reply.id, `${field}.id`);
+  requireString(reply.body, `${field}.body`);
+  optionalString(reply.author, `${field}.author`);
+  requireString(reply.createdAt, `${field}.createdAt`);
+  requireString(reply.updatedAt, `${field}.updatedAt`);
+}
+
+function validateComment(value: unknown, field: string): void {
+  const comment = requireRecord(value, field);
+  requireString(comment.id, `${field}.id`);
+  requireString(comment.body, `${field}.body`);
+  optionalString(comment.author, `${field}.author`);
+  requireString(comment.createdAt, `${field}.createdAt`);
+  requireString(comment.updatedAt, `${field}.updatedAt`);
+  if (comment.side !== "old" && comment.side !== "new") {
+    malformed(`${field}.side`);
+  }
+  requireInteger(comment.line, `${field}.line`, 1);
+  requireInteger(comment.originalLine, `${field}.originalLine`, 1);
+  if (comment.status !== "active" && comment.status !== "resolved") {
+    malformed(`${field}.status`);
+  }
+  if (typeof comment.outdated !== "boolean") {
+    malformed(`${field}.outdated`);
+  }
+  optionalString(comment.noteKey, `${field}.noteKey`);
+  if (comment.replies !== undefined) {
+    if (!Array.isArray(comment.replies)) {
+      malformed(`${field}.replies`);
+    }
+    comment.replies.forEach((reply, index) => validateReply(reply, `${field}.replies[${index}]`));
+  }
+}
+
+function validateSourceCapabilities(value: unknown): ReviewSourceCapabilities {
+  const capabilities = requireRecord(value, "sourceCapabilities");
+  if (capabilities.old !== "hunk") {
+    malformed("sourceCapabilities.old");
+  }
+  if (capabilities.new !== "hunk" && capabilities.new !== "workspace") {
+    malformed("sourceCapabilities.new");
+  }
+
+  return { old: "hunk", new: capabilities.new };
 }
 
 /**
@@ -165,7 +334,57 @@ export function parseReviewExport(payload: unknown): ReviewExport {
     throw new HunkReviewError("Hunk returned a review with no file list.");
   }
 
-  return payload as unknown as ReviewExport;
+  if (
+    typeof payload.reviewCommentsVersion !== "number" ||
+    !Number.isInteger(payload.reviewCommentsVersion)
+  ) {
+    malformed("reviewCommentsVersion");
+  }
+  if (payload.repoRoot !== null && typeof payload.repoRoot !== "string") {
+    malformed("repoRoot");
+  }
+  review.files.forEach(validateFile);
+  optionalString(review.title, "review.title");
+  optionalString(review.sourceLabel, "review.sourceLabel");
+  if (
+    review.inputKind !== undefined &&
+    review.inputKind !== "vcs" &&
+    review.inputKind !== "show" &&
+    review.inputKind !== "stash-show"
+  ) {
+    malformed("review.inputKind");
+  }
+  optionalString(review.agentSummary, "review.agentSummary");
+  if (review.reviewNotes !== undefined) {
+    if (!Array.isArray(review.reviewNotes)) {
+      malformed("review.reviewNotes");
+    }
+    review.reviewNotes.forEach(validateNote);
+  }
+  if (
+    !Array.isArray(payload.viewedFilePaths) ||
+    payload.viewedFilePaths.some((path) => typeof path !== "string")
+  ) {
+    malformed("viewedFilePaths");
+  }
+  if (typeof payload.commentsAvailable !== "boolean") {
+    malformed("commentsAvailable");
+  }
+  optionalString(payload.commentsUnavailableReason, "commentsUnavailableReason");
+  const comments = requireRecord(payload.comments, "comments");
+  for (const [path, value] of Object.entries(comments)) {
+    if (!Array.isArray(value)) {
+      malformed(`comments.${path}`);
+    }
+    value.forEach((comment, index) => validateComment(comment, `comments.${path}[${index}]`));
+  }
+
+  const sourceCapabilities =
+    payload.sourceCapabilities !== undefined
+      ? validateSourceCapabilities(payload.sourceCapabilities)
+      : { old: "hunk" as const, new: "hunk" as const };
+
+  return { ...payload, sourceCapabilities } as unknown as ReviewExport;
 }
 
 /**

@@ -13,6 +13,7 @@ import {
 } from "./reviewComments";
 import { resolveReviewCommentsPath, resolveViewedStatePath } from "./reviewStore";
 import type { AppBootstrap } from "./types";
+import type { ExtensionVcsSourceCapabilities } from "../extension-api/types";
 import { readViewedState, resolveViewedPaths } from "./viewedState";
 
 /**
@@ -76,6 +77,8 @@ export interface ReviewExport {
   exportVersion: typeof REVIEW_EXPORT_VERSION;
   reviewCommentsVersion: typeof REVIEW_COMMENTS_VERSION;
   repoRoot: string | null;
+  /** Exact source provenance for editor clients; old adapters default conservatively to Hunk. */
+  sourceCapabilities: ExtensionVcsSourceCapabilities;
   /** The same payload shape `hunk session review --json` returns for a live session. */
   review: SessionReview;
   viewedFilePaths: string[];
@@ -190,6 +193,7 @@ export function buildReviewExport(
     exportVersion: REVIEW_EXPORT_VERSION,
     reviewCommentsVersion: REVIEW_COMMENTS_VERSION,
     repoRoot,
+    sourceCapabilities: bootstrap.changeset.sourceCapabilities ?? { old: "hunk", new: "hunk" },
     review,
     viewedFilePaths,
     commentsAvailable,

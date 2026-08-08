@@ -192,6 +192,7 @@ hunk review focus clear --json
 | `--exclude-untracked`    | exclude untracked files from working tree reviews                                                      |
 | `--no-exclude-untracked` | include untracked files in working tree reviews Compatibility inverse; omitted from `--help`.          |
 | `--json`                 | emit structured JSON (the only supported format)                                                       |
+| `--source <source>`      | repo-backed source: diff, show, or stash-show (default: diff)                                          |
 | `--include-patch`        | export: include raw unified patch text per file                                                        |
 | `--repo <path>`          | repo root to operate on instead of the current directory                                               |
 | `--file <path>`          | repo-relative file the operation targets; repeatable for `viewed set`, which applies them in one write |

@@ -22,6 +22,7 @@ function buildExport(overrides: Partial<ReviewExport> = {}): ReviewExport {
   return {
     exportVersion: 1,
     reviewCommentsVersion: 1,
+    sourceCapabilities: { old: "hunk", new: "workspace" },
     // Real, not a placeholder: the extension resolves documents against this, so a fake
     // root would make every workspace-file lookup miss.
     repoRoot: workspaceRoot(),
@@ -53,11 +54,17 @@ interface ReviewEnvelope {
   review: ReviewExport;
 }
 
+/** The envelope returned by `hunk review focus get`. */
+interface FocusEnvelope {
+  focus: unknown;
+}
+
 /** One scripted CLI response: a raw process result, a payload, or a thrown failure. */
 type ScriptedResponse =
   | Partial<HunkRunResult>
   | ReviewExport
   | ReviewEnvelope
+  | FocusEnvelope
   | ((args: string[]) => unknown);
 
 /**
@@ -186,6 +193,76 @@ suite("hunk review in VS Code", () => {
       shown.some((message) => message.includes("v99")),
       `expected a version-mismatch message, got ${JSON.stringify(shown)}`,
     );
+  });
+
+  test("a failed target replacement leaves the current review intact", async () => {
+    const api = await extensionApi();
+    const { runner } = scriptRunner([
+      buildExport(),
+      {
+        exitCode: 1,
+        stdout: "",
+        stderr: JSON.stringify({ error: { kind: "user", message: "invalid target" } }),
+      },
+    ]);
+    api.__setHunkRunnerForTests(runner);
+
+    await vscode.commands.executeCommand("hunkReview.openReview");
+    const before = api.__getActiveReviewForTests();
+    assert.ok(before);
+
+    const originalQuickPick = vscode.window.showQuickPick;
+    const originalInput = vscode.window.showInputBox;
+    (vscode.window as { showQuickPick: unknown }).showQuickPick = () =>
+      Promise.resolve({ choice: "staged" });
+    (vscode.window as { showInputBox: unknown }).showInputBox = () => Promise.resolve("");
+
+    try {
+      const { shown } = await captureMessages(() =>
+        Promise.resolve(vscode.commands.executeCommand("hunkReview.selectTarget")),
+      );
+      assert.ok(shown.some((message) => message.includes("invalid target")));
+    } finally {
+      (vscode.window as { showQuickPick: unknown }).showQuickPick = originalQuickPick;
+      (vscode.window as { showInputBox: unknown }).showInputBox = originalInput;
+    }
+
+    assert.equal(api.__getActiveReviewForTests(), before);
+    assert.deepEqual(api.__getActiveReviewForTests()?.target, { kind: "working-tree" });
+  });
+
+  test("a focus on a file outside the review is recoverable", async () => {
+    const api = await extensionApi();
+    const { runner } = scriptRunner([
+      buildExport(),
+      {
+        focus: {
+          target: { kind: "working-tree" },
+          file: "not-in-review.ts",
+          side: "new",
+          line: 1,
+          revision: 1,
+        },
+      },
+    ]);
+    api.__setHunkRunnerForTests(runner);
+
+    await vscode.commands.executeCommand("hunkReview.openReview");
+    const before = api.__getActiveReviewForTests();
+    assert.ok(before);
+
+    const { shown } = await captureMessages(() =>
+      Promise.resolve(vscode.commands.executeCommand("hunkReview.followFocus")),
+    );
+
+    assert.ok(
+      shown.some(
+        (message) =>
+          message.includes("not-in-review.ts") && message.includes("Choose what to review"),
+      ),
+      `expected a recoverable focus warning, got ${JSON.stringify(shown)}`,
+    );
+    assert.equal(api.__getActiveReviewForTests(), before);
   });
 
   test("a missing binary reports how to fix it", async () => {
@@ -488,6 +565,27 @@ suite("hunk review in VS Code", () => {
       .map((call) => call.args[call.args.indexOf("--side") + 1]);
 
     // Both sides were requested from Hunk; neither resolved to a file on disk.
+    assert.ok(sides.includes("old"), `expected an old-side fetch, got ${JSON.stringify(sides)}`);
+    assert.ok(sides.includes("new"), `expected a new-side fetch, got ${JSON.stringify(sides)}`);
+  });
+
+  test("a historical new side is served by Hunk, never by the live workspace", async () => {
+    const api = await extensionApi();
+    const { runner, calls } = scriptRunner([
+      buildExport({ sourceCapabilities: { old: "hunk", new: "hunk" } }),
+      (args: string[]) => {
+        const side = args[args.indexOf("--side") + 1];
+        return { path: "alpha.ts", side, text: `${side} historical\n` };
+      },
+    ]);
+    api.__setHunkRunnerForTests(runner);
+
+    await vscode.commands.executeCommand("hunkReview.openReview");
+    await vscode.commands.executeCommand("hunkReview.openFile", "alpha.ts");
+
+    const sides = calls
+      .filter((call) => call.args.includes("source"))
+      .map((call) => call.args[call.args.indexOf("--side") + 1]);
     assert.ok(sides.includes("old"), `expected an old-side fetch, got ${JSON.stringify(sides)}`);
     assert.ok(sides.includes("new"), `expected a new-side fetch, got ${JSON.stringify(sides)}`);
   });

@@ -87,6 +87,18 @@ describe("review focus", () => {
       JSON.stringify({ version: 2, target: { kind: "staged" }, revision: 1, updatedAt: "x" }),
       JSON.stringify({ version: 1, target: { kind: "elsewhere" }, revision: 1, updatedAt: "x" }),
       JSON.stringify({ version: 1, target: { kind: "range" }, revision: 1, updatedAt: "x" }),
+      JSON.stringify({
+        version: 1,
+        target: { kind: "stash-show", pathspecs: ["src"] },
+        revision: 1,
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      }),
+      JSON.stringify({
+        version: 1,
+        target: { kind: "working-tree", pathspecs: ["   "] },
+        revision: 1,
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      }),
       // A line with no file cannot be revealed anywhere.
       JSON.stringify({
         version: 1,
