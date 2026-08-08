@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { platform, tmpdir } from "node:os";
 import { join } from "node:path";
+import { hasSaplingCli } from "../../test/helpers/sapling";
 import { resolveConfiguredCliInput } from "./config";
 import { SourceTextTooLargeError } from "./fileSource";
 import { loadAppBootstrap } from "./loaders";
@@ -128,7 +129,7 @@ function createTempSlRepo(prefix: string) {
 // Keep jj-backed loader coverage opt-in on machines that have the external CLI installed.
 const jjTest = Bun.which("jj") ? test : test.skip;
 // Keep sl-backed loader coverage opt-in on machines that have the external CLI installed.
-const slTest = Bun.which("sl") ? test : test.skip;
+const slTest = (await hasSaplingCli()) ? test : test.skip;
 
 async function runWithHome<T>(home: string, task: () => Promise<T>) {
   const previousHome = process.env.HOME;

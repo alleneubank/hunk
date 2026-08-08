@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { platform, tmpdir } from "node:os";
 import { join } from "node:path";
+import { hasSaplingCli } from "../../../../../test/helpers/sapling";
 import { SaplingVcsAdapter } from ".";
 import type {
   ExtensionVcsOperations,
@@ -13,16 +14,7 @@ import type {
 // through that contract too — including the operations an adapter may omit.
 const slOperations: ExtensionVcsOperations = SaplingVcsAdapter.operations;
 
-const slAvailable = (() => {
-  try {
-    return (
-      Bun.spawnSync(["sl", "version"], { stdin: "ignore", stdout: "ignore", stderr: "ignore" })
-        .exitCode === 0
-    );
-  } catch {
-    return false;
-  }
-})();
+const slAvailable = await hasSaplingCli();
 const tempDirs: string[] = [];
 const SlAdapterIntegrationTestTimeoutMs = 20_000;
 

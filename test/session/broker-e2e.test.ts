@@ -117,9 +117,10 @@ function spawnHunkSession(
 ) {
   const innerCommand = `bun run ${shellQuote(sourceEntrypoint)} diff ${shellQuote(fixture.before)} ${shellQuote(fixture.after)}`;
   const hunkCommand = [
-    `(sleep ${quitAfterSeconds}; printf q) | timeout ${timeoutSeconds} script -q -f -e -c`,
-    shellQuote(innerCommand),
+    `(sleep ${quitAfterSeconds}; printf q) | timeout ${timeoutSeconds} script -q -e`,
     shellQuote(fixture.transcript),
+    "/bin/sh -c",
+    shellQuote(innerCommand),
   ].join(" ");
 
   return Bun.spawn(["bash", "-lc", hunkCommand], {

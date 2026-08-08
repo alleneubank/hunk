@@ -12,6 +12,7 @@ const testConfigHome = createTestConfigHome();
 
 afterAll(cleanupTestConfigHomes);
 const tempDirs: string[] = [];
+const sessionDaemonPorts = new Set<number>();
 const ttyToolsAvailable =
   Bun.spawnSync(["bash", "-lc", "command -v script >/dev/null && command -v timeout >/dev/null"], {
     stdin: "ignore",
@@ -84,6 +85,36 @@ async function reserveLoopbackPort() {
   return port;
 }
 
+async function reserveSessionDaemonPort() {
+  const port = await reserveLoopbackPort();
+  sessionDaemonPorts.add(port);
+  return port;
+}
+
+async function stopSessionDaemon(port: number) {
+  let pid: number | undefined;
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/health`);
+    if (response.ok) {
+      pid = ((await response.json()) as { pid?: number }).pid;
+    }
+  } catch {
+    return;
+  }
+
+  if (!pid || pid === process.pid) {
+    return;
+  }
+
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch (error) {
+    if (!(error instanceof Error) || !("code" in error) || error.code !== "ESRCH") {
+      throw error;
+    }
+  }
+}
+
 function createFixtureFiles(name: string, beforeLines: string[], afterLines: string[]) {
   const dir = mkdtempSync(join(tmpdir(), `hunk-session-cli-${name}-`));
   tempDirs.push(dir);
@@ -114,9 +145,10 @@ function spawnHunkSession(
 ) {
   const innerCommand = `bun run ${shellQuote(sourceEntrypoint)} diff ${shellQuote(fixture.before)} ${shellQuote(fixture.after)}`;
   const hunkCommand = [
-    `(sleep ${quitAfterSeconds}; printf q) | timeout ${timeoutSeconds} script -q -f -e -c`,
-    shellQuote(innerCommand),
+    `(sleep ${quitAfterSeconds}; printf q) | timeout ${timeoutSeconds} script -q -e`,
     shellQuote(fixture.transcript),
+    "/bin/sh -c",
+    shellQuote(innerCommand),
   ].join(" ");
 
   return Bun.spawn(["bash", "-lc", hunkCommand], {
@@ -150,7 +182,11 @@ function runSessionCli(args: string[], port: number, stdinText?: string) {
   return { proc, stdout, stderr };
 }
 
-afterEach(() => {
+afterEach(async () => {
+  for (const port of sessionDaemonPorts) {
+    await stopSessionDaemon(port);
+  }
+  sessionDaemonPorts.clear();
   cleanupTempDirs();
 });
 
@@ -160,7 +196,7 @@ describe("session CLI integration", () => {
       return;
     }
 
-    const port = 48961;
+    const port = await reserveSessionDaemonPort();
     const fixture = createFixtureFiles(
       "inspect",
       ["export const value = 1;", "console.log(value);"],
@@ -225,7 +261,7 @@ describe("session CLI integration", () => {
       return;
     }
 
-    const port = await reserveLoopbackPort();
+    const port = await reserveSessionDaemonPort();
     const fixture = createFixtureFiles(
       "viewed",
       ["export const value = 1;"],
@@ -335,7 +371,7 @@ describe("session CLI integration", () => {
       return;
     }
 
-    const port = 48963;
+    const port = await reserveSessionDaemonPort();
     const fixtureA = createFixtureFiles(
       "reload-alpha",
       ["export const alpha = 1;"],
@@ -407,7 +443,7 @@ describe("session CLI integration", () => {
       return;
     }
 
-    const port = 48966;
+    const port = await reserveSessionDaemonPort();
     const fixture = createFixtureFiles(
       "reload-denied",
       ["export const visible = 1;"],
@@ -468,7 +504,7 @@ describe("session CLI integration", () => {
       return;
     }
 
-    const port = 48962;
+    const port = await reserveSessionDaemonPort();
     const fixture = createFixtureFiles(
       "mutate",
       [
@@ -679,7 +715,7 @@ describe("session CLI integration", () => {
       return;
     }
 
-    const port = 48964;
+    const port = await reserveSessionDaemonPort();
     const fixture = createFixtureFiles(
       "apply-batch",
       [
@@ -796,7 +832,7 @@ describe("session CLI integration", () => {
       return;
     }
 
-    const port = 48965;
+    const port = await reserveSessionDaemonPort();
     const fixture = createFixtureFiles(
       "apply-batch-focus",
       [

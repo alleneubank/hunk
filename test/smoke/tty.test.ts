@@ -89,7 +89,7 @@ function createFixtureFiles(lines = 1) {
   );
 
   const patchProc = Bun.spawnSync(
-    ["git", "diff", "--no-index", "--no-color", "--", before, after],
+    ["git", "diff", "--no-index", "--no-color", "--", "before.ts", "after.ts"],
     {
       cwd: dir,
       stdin: "ignore",
@@ -98,7 +98,7 @@ function createFixtureFiles(lines = 1) {
     },
   );
   const coloredPatchProc = Bun.spawnSync(
-    ["git", "diff", "--no-index", "--color=always", "--", before, after],
+    ["git", "diff", "--no-index", "--color=always", "--", "before.ts", "after.ts"],
     {
       cwd: dir,
       stdin: "ignore",
@@ -165,7 +165,7 @@ async function runTtySmoke(options: {
   }
 
   const hunkCommand = `bun run ${shellQuote(sourceEntrypoint)} ${args.map(shellQuote).join(" ")}`;
-  const scriptCommand = `timeout 7 script -q -f -e -c ${shellQuote(hunkCommand)} ${shellQuote(transcript)}`;
+  const scriptCommand = `timeout 7 script -q -e ${shellQuote(transcript)} /bin/sh -c ${shellQuote(hunkCommand)}`;
   const inputCommand = options.inputCommand ?? `(sleep 2; printf q)`;
   const proc = Bun.spawnSync(["bash", "-lc", `${inputCommand} | ${scriptCommand}`], {
     cwd: fixture.dir,
@@ -199,7 +199,7 @@ async function runStdinPagerSmoke(options?: {
   const transcript = join(fixture.dir, "stdin-pager-transcript.txt");
   const subcommand = options?.command === "pager" ? "pager" : "patch -";
   const patchCommand = `cat ${shellQuote(fixture.coloredPatch)} | bun run ${shellQuote(sourceEntrypoint)} ${subcommand}`;
-  const scriptCommand = `timeout 7 script -q -f -e -c ${shellQuote(patchCommand)} ${shellQuote(transcript)}`;
+  const scriptCommand = `timeout 7 script -q -e ${shellQuote(transcript)} /bin/sh -c ${shellQuote(patchCommand)}`;
   const inputCommand =
     options?.inputCommand ?? `(sleep 2; printf ${shellQuote(options?.input ?? "q")})`;
   const proc = Bun.spawnSync(["bash", "-lc", `${inputCommand} | ${scriptCommand}`], {
