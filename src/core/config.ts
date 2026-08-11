@@ -1,5 +1,5 @@
 import fs from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { sanitizeTerminalLine } from "../lib/terminalText";
 import { BUNDLED_SHIKI_THEME_IDS, LEGACY_THEME_ID_ALIASES } from "./themeCatalog";
 import {
@@ -13,9 +13,10 @@ import {
   resolveThemeBase,
 } from "./customThemes";
 import { LEGACY_CUSTOM_SYNTAX_COLOR_KEYS, resolveSyntaxScopeOverrides } from "./legacySyntaxScopes";
-import { resolveGlobalConfigPath } from "./paths";
+import { conventionalAgentContextPath, HUNK_DIR_NAME, resolveGlobalConfigPath } from "./paths";
 import { LEGACY_CUSTOM_SYNTAX_NOTICES, type StartupNotice } from "./startupNotice";
 import { DEFAULT_TAB_WIDTH, validateTabWidth } from "./tabWidth";
+import { isRecord } from "./typeGuards";
 import { detectVcs, findVcsRepoRootCandidate, getDefaultVcsAdapter } from "./vcs";
 import type {
   CliInput,
@@ -93,10 +94,6 @@ export interface HunkConfigResolution {
   globalConfigPath?: string;
   repoConfigPath?: string;
   viewPreferencesConfigPath?: string;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /** Serialize one primitive TOML preference value. */
@@ -244,6 +241,15 @@ export const CONFIG_REFERENCE_OPTIONS: readonly ConfigReferenceOption[] = [
     accepted: "a built-in theme id or `custom`",
     runtimeDefault: DEFAULT_THEME_ID,
     description: "Select the active color theme.",
+  },
+  {
+    key: "agent_context",
+    property: "agentContext",
+    type: "string",
+    accepted: "a path to an agent-context JSON sidecar",
+    defaultValue: `\`${HUNK_DIR_NAME}/agent-context.<targetId>.json\` for the current review target when present`,
+    description:
+      "Point at an agent-rationale sidecar. Relative paths resolve against the repo root. A configured path is a strict opt-in that outranks auto-discovery of the target-keyed conventional file. Bare `.hunk/agent-context.json` is never auto-loaded; pass it here or via `--agent-context` if you still want that path.",
   },
   {
     key: "watch",
@@ -824,6 +830,7 @@ function normalizeConfigReferenceValue(property: keyof CommonOptions, value: unk
     case "vcs":
       return normalizeVcsMode(value);
     case "theme":
+    case "agentContext":
       return normalizeString(value);
     case "tabWidth":
       return normalizeTabWidth(value);
@@ -876,6 +883,8 @@ function mergeOptions(base: CommonOptions, overrides: CommonOptions): CommonOpti
     vcs: overrides.vcs ?? base.vcs,
     theme: overrides.theme ?? base.theme,
     agentContext: overrides.agentContext ?? base.agentContext,
+    noAgentContext: overrides.noAgentContext ?? base.noAgentContext,
+    agentContextOptional: overrides.agentContextOptional ?? base.agentContextOptional,
     pager: overrides.pager ?? base.pager,
     watch: overrides.watch ?? base.watch,
     experimental: overrides.experimental ?? base.experimental,
@@ -1034,7 +1043,7 @@ export function resolveConfiguredCliInput(
   { cwd = process.cwd(), env = process.env }: ConfigResolutionOptions = {},
 ): HunkConfigResolution {
   const repoRoot = findVcsRepoRootCandidate(cwd);
-  const repoConfigPath = repoRoot ? join(repoRoot, ".hunk", "config.toml") : undefined;
+  const repoConfigPath = repoRoot ? join(repoRoot, HUNK_DIR_NAME, "config.toml") : undefined;
   const userConfigPath = resolveGlobalConfigPath(env);
   let resolvedCustomThemes: NamedCustomThemeConfig[] = [];
   let usesLegacyCustomSyntax = false;
@@ -1046,7 +1055,14 @@ export function resolveConfiguredCliInput(
 
   let resolvedOptions: CommonOptions = {
     ...buildDefaultConfigPreferences(cwd),
-    agentContext: input.options.agentContext,
+    // Seeded empty on purpose: the sidecar seam below reads this slot to learn what the *config*
+    // layers asked for. Seeding it from CLI input would make a re-resolved conventional path look
+    // like an explicit one, and watch reloads would silently turn strict.
+    agentContext: undefined,
+    // `agent_notes` carries a documented catalog default, but resolution must leave it unresolved:
+    // `loadAppBootstrap` turns notes ON exactly when a sidecar loads and OFF otherwise. Taking the
+    // catalog default here would pin it OFF before discovery ever runs.
+    agentNotes: undefined,
     pager: input.options.pager ?? false,
     experimental: false,
     ...(input.options.pager ? { menuBar: false } : {}),
@@ -1085,10 +1101,42 @@ export function resolveConfiguredCliInput(
   }
 
   explicitVcsId = input.options.vcs ?? explicitVcsId;
+
+  // Config-provided sidecar path (repo over user, including command/pager sections),
+  // captured before the CLI merge so it is not conflated with explicit CLI input.
+  const configAgentContext = resolvedOptions.agentContext;
+  let resolvedAgentContext: string | undefined;
+  let resolvedAgentContextOptional = false;
+
+  if (input.options.noAgentContext === true) {
+    // Opt-out beats explicit, configured, and conventional sidecar paths.
+    resolvedAgentContext = undefined;
+  } else if (
+    typeof input.options.agentContext === "string" &&
+    input.options.agentContext.length > 0 &&
+    input.options.agentContextOptional !== true
+  ) {
+    // Watch re-resolution feeds the already-resolved input back through this seam; the
+    // optional marker prevents the conventional default from becoming strict by accident.
+    resolvedAgentContext = input.options.agentContext;
+  } else if (configAgentContext) {
+    // Configured paths are strict opt-ins and resolve against the repo root when present.
+    resolvedAgentContext = resolve(repoRoot ?? cwd, configAgentContext);
+  } else if (repoRoot) {
+    // Keyed conventional path only — bare agent-context.json is never auto-discovered
+    // (SPEC REQ-AGENT-001 / #540). Watch tracks create/rewrite/delete of this file.
+    const keyedPath = conventionalAgentContextPath(repoRoot, input);
+    if (keyedPath) {
+      resolvedAgentContext = keyedPath;
+      resolvedAgentContextOptional = true;
+    }
+  }
+
   resolvedOptions = mergeOptions(resolvedOptions, input.options);
   resolvedOptions = {
     ...resolvedOptions,
-    agentContext: input.options.agentContext,
+    agentContext: resolvedAgentContext,
+    agentContextOptional: resolvedAgentContextOptional,
     pager: input.options.pager ?? false,
     watch: input.options.watch ?? resolvedOptions.watch ?? false,
     experimental: input.options.experimental ?? false,
@@ -1101,7 +1149,9 @@ export function resolveConfiguredCliInput(
     wrapLines: resolvedOptions.wrapLines ?? DEFAULT_VIEW_PREFERENCES.wrapLines,
     hunkHeaders: resolvedOptions.hunkHeaders ?? DEFAULT_VIEW_PREFERENCES.showHunkHeaders,
     menuBar: resolvedOptions.menuBar ?? DEFAULT_VIEW_PREFERENCES.showMenuBar,
-    agentNotes: resolvedOptions.agentNotes ?? DEFAULT_VIEW_PREFERENCES.showAgentNotes,
+    // `agentNotes` is intentionally left unresolved here: loadAppBootstrap defaults it ON when
+    // a sidecar actually loads (agentContext !== null) and OFF otherwise. Collapsing it to a
+    // concrete default here would kill that behavior. Explicit CLI/config values still win.
     copyDecorations: resolvedOptions.copyDecorations ?? DEFAULT_VIEW_PREFERENCES.copyDecorations,
     promptSaveViewPreferences: resolvedOptions.promptSaveViewPreferences ?? true,
     transparentBackground: resolvedOptions.transparentBackground ?? false,

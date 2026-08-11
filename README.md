@@ -9,10 +9,16 @@ Hunk is a review-first terminal diff viewer for agent-authored changesets, built
 [![MIT License](https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge)](LICENSE)
 
 - multi-file review stream with sidebar navigation
+- per-file viewed progress with keyboard navigation and repo-local persistence
 - inline AI and agent annotations beside the code
 - split, stack, and responsive auto layouts
 - watch mode for auto-reloading file and Git-backed reviews
 - keyboard, mouse, pager, and Git difftool support
+
+Press `v` to toggle the selected file viewed and `>` / `<` to jump between unviewed files.
+Viewed files show a dimmed name and `✓` in the sidebar while the menu bar reports
+`viewed n/m`. Repo-backed reviews persist this progress in `.hunk/review-state.json` and
+automatically unview a file when its diff changes.
 
 <table>
  <tr>
@@ -136,6 +142,7 @@ tab_width = 4       # tab stops, 1-16
 wrap_lines = false
 menu_bar = true
 agent_notes = false
+agent_context = ".hunk/notes.json" # optional strict path; resolves against the repo root
 prompt_save_view_preferences = true
 transparent_background = false
 ```
@@ -143,6 +150,16 @@ transparent_background = false
 Choose a built-in theme, `auto`, or a custom theme with `theme`. See
 [docs/themes.md](docs/themes.md) for automatic selection, custom theme tables,
 syntax scopes, and legacy syntax-table migration.
+
+Bare `hunk diff` / `hunk diff <range>` / `hunk show` auto-load
+`<repoRoot>/.hunk/agent-context.<targetId>.json` when that file exists for the
+**current review target** (working tree, staged, range expression, or show ref).
+The path is best-effort and skipped when absent or malformed; when it loads,
+agent notes are shown by default. Bare `.hunk/agent-context.json` is **not**
+auto-loaded — use `--agent-context` or config if you still want that path.
+Agents read `agentContextPath` from `hunk review export --json` to learn where
+to write. Use `--no-agent-context` to disable loading, and Hunk keeps its own
+`.hunk/` metadata out of untracked review noise.
 
 `exclude_untracked` affects Git/Sapling working-tree `hunk diff` sessions only.
 `tab_width` controls source-code tab stops and can be overridden with `-x4` or `--tab-width 4`.

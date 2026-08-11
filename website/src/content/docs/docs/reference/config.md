@@ -60,6 +60,16 @@ Select the active color theme.
 
 ---
 
+**`agent_context`**
+
+Point at an agent-rationale sidecar. Relative paths resolve against the repo root, and a configured path is a strict opt-in that outranks the conventional sidecar.
+
+- **Type:** string
+- **Accepted:** a path to an agent-context JSON sidecar
+- **Built-in default:** `.hunk/agent-context.json` when present
+
+---
+
 **`watch`**
 
 Reload supported review inputs when their source changes.
