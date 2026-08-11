@@ -47,6 +47,7 @@ function createTestCommands(resolvedKeys?: ResolvedCommandKeys) {
     moveToAnnotatedFile: record("moveToAnnotatedFile"),
     moveToAnnotatedHunk: record("moveToAnnotatedHunk"),
     moveToFile: record("moveToFile"),
+    moveToUnviewedFile: record("moveToUnviewedFile"),
     moveToHunk: record("moveToHunk"),
     openAgentSkill: record("openAgentSkill"),
     openThemeSelector: record("openThemeSelector"),
@@ -68,6 +69,7 @@ function createTestCommands(resolvedKeys?: ResolvedCommandKeys) {
     toggleLineWrap: record("toggleLineWrap"),
     toggleMenuBar: record("toggleMenuBar"),
     toggleSidebar: record("toggleSidebar"),
+    toggleViewedForSelectedFile: record("toggleViewedForSelectedFile"),
     triggerEditSelectedFile: record("triggerEditSelectedFile"),
     triggerRefreshCurrentInput: record("triggerRefreshCurrentInput"),
   };

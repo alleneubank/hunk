@@ -92,6 +92,7 @@ export interface BuildAppCommandsOptions {
   moveToAnnotatedHunk: (delta: number) => void;
   moveToFile: (delta: number) => void;
   moveToHunk: (delta: number) => void;
+  moveToUnviewedFile: (delta: number) => void;
   openAgentSkill: () => void;
   openThemeSelector: () => void;
   requestQuit: () => void;
@@ -113,6 +114,7 @@ export interface BuildAppCommandsOptions {
   toggleLineWrap: () => void;
   toggleMenuBar: () => void;
   toggleSidebar: () => void;
+  toggleViewedForSelectedFile: () => void;
   triggerEditSelectedFile: () => void;
   triggerRefreshCurrentInput: () => void;
 }
@@ -467,6 +469,27 @@ function builtinCommandSpecs(options: BuildAppCommandsOptions): BuiltinCommandSp
       closesMenu: true,
     },
     {
+      id: "hunk.review.previousUnviewedFile",
+      title: "Previous unviewed file",
+      defaultKeys: ["<"],
+      run: () => options.moveToUnviewedFile(-1),
+      closesMenu: true,
+    },
+    {
+      id: "hunk.review.nextUnviewedFile",
+      title: "Next unviewed file",
+      defaultKeys: [">"],
+      run: () => options.moveToUnviewedFile(1),
+      closesMenu: true,
+    },
+    {
+      id: "hunk.review.toggleViewed",
+      title: "Toggle file viewed",
+      defaultKeys: ["v"],
+      run: () => options.toggleViewedForSelectedFile(),
+      closesMenu: true,
+    },
+    {
       id: "hunk.review.previousAnnotatedHunk",
       title: "Previous annotated hunk",
       defaultKeys: ["{"],
@@ -538,6 +561,7 @@ const NOOP_COMMAND_OPTIONS: BuildAppCommandsOptions = (() => {
     moveToAnnotatedFile: noop,
     moveToAnnotatedHunk: noop,
     moveToFile: noop,
+    moveToUnviewedFile: noop,
     moveToHunk: noop,
     openAgentSkill: noop,
     openThemeSelector: noop,
@@ -558,6 +582,7 @@ const NOOP_COMMAND_OPTIONS: BuildAppCommandsOptions = (() => {
     toggleLineWrap: noop,
     toggleMenuBar: noop,
     toggleSidebar: noop,
+    toggleViewedForSelectedFile: noop,
     triggerEditSelectedFile: noop,
     triggerRefreshCurrentInput: noop,
   };

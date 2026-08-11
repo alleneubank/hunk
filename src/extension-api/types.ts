@@ -192,6 +192,14 @@ export interface ExtensionDiffFile {
   isUntracked?: boolean;
   isBinary?: boolean;
   isTooLarge?: boolean;
+  /**
+   * Whether the reviewer has marked this file viewed.
+   *
+   * Review progress, not diff content: it is the reviewer's own state, tracked
+   * per repo and reset when a file's patch changes. Absent means not viewed, so
+   * surfaces that ignore review progress need no change.
+   */
+  viewed?: boolean;
 }
 
 /** One reviewed changeset, as extensions see it. */
@@ -615,6 +623,17 @@ export type ExtensionVcsFileChangeType =
 /** Which side of a change a source read asks for. */
 export type ExtensionVcsFileSide = ExtensionFileSide;
 
+/** Where a headless editor client should read one side of a repo-backed review. */
+export type ExtensionVcsSourceKind = "hunk" | "workspace";
+
+/** Source provenance for the two sides of an adapter-backed review. */
+export interface ExtensionVcsSourceCapabilities {
+  /** The old side is always served by Hunk's VCS source reader. */
+  old: "hunk";
+  /** The new side may be the live workspace or a VCS/index source owned by Hunk. */
+  new: ExtensionVcsSourceKind;
+}
+
 /** The one file and side Hunk wants full source text for. */
 export interface ExtensionVcsFileSourceRequest {
   /** Repo-root-relative path of the file under review. */
@@ -710,6 +729,8 @@ export interface ExtensionVcsPatchResult {
   sourceLabel: string;
   title: string;
   patchText: string;
+  /** Exact source provenance for editor clients; omitted by older adapters for compatibility. */
+  sourceCapabilities?: ExtensionVcsSourceCapabilities;
   /**
    * Untracked files to review beside the patch, as repo-root-relative paths.
    *

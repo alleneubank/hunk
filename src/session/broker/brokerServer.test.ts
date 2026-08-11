@@ -299,6 +299,7 @@ describe("Hunk session daemon server", () => {
           "context",
           "review",
           "navigate",
+          "viewed-set",
           "reload",
           "comment-add",
           "comment-apply",
@@ -616,6 +617,7 @@ describe("Hunk session daemon server", () => {
           path: "src/example.ts",
           additions: 1,
           deletions: 1,
+          changeType: "deleted",
           hunkCount: 1,
           patch: "@@ -1,1 +1,1 @@",
           hunks: [
@@ -641,6 +643,7 @@ describe("Hunk session daemon server", () => {
             path: "src/example.ts",
             additions: 1,
             deletions: 1,
+            changeType: "deleted",
             hunkCount: 1,
             patch: "@@ -1,1 +1,1 @@",
             hunks: [
@@ -679,6 +682,9 @@ describe("Hunk session daemon server", () => {
             {
               path: "src/example.ts",
               patch: "@@ -1,1 +1,1 @@",
+              // Asserted end to end because patching the generic prototype widens the
+              // return type, so a dropped discriminator is invisible to tsc here.
+              changeType: "deleted",
             },
           ],
         },
@@ -762,6 +768,7 @@ describe("Hunk session daemon server", () => {
       reviewNotes: [
         {
           noteId: "user:1",
+          noteKey: "user:1",
           source: "user",
           filePath: "src/example.ts",
           hunkIndex: 0,
@@ -771,6 +778,7 @@ describe("Hunk session daemon server", () => {
         },
         {
           noteId: "agent:1",
+          noteKey: "agent:1",
           source: "agent",
           filePath: "src/other.ts",
           body: "Agent note",

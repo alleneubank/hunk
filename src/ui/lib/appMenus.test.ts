@@ -19,6 +19,7 @@ const MENU_STATE: Omit<BuildAppMenusOptions, "commands" | "extensionCommands"> =
   cursorLine: "row" as const,
   layoutMode: "stack",
   renderSidebar: false,
+  selectedFileViewed: false,
   showAgentNotes: true,
   showHelp: false,
   showHunkHeaders: false,
@@ -46,6 +47,7 @@ function createTestCommands(overrides: Partial<BuildAppCommandsOptions> = {}) {
     moveToAnnotatedFile: record("moveToAnnotatedFile"),
     moveToAnnotatedHunk: noop,
     moveToFile: noop,
+    moveToUnviewedFile: noop,
     moveToHunk: noop,
     openAgentSkill: record("openAgentSkill"),
     openThemeSelector: noop,
@@ -66,6 +68,7 @@ function createTestCommands(overrides: Partial<BuildAppCommandsOptions> = {}) {
     toggleLineWrap: noop,
     toggleMenuBar: noop,
     toggleSidebar: record("toggleSidebar"),
+    toggleViewedForSelectedFile: record("toggleViewedForSelectedFile"),
     triggerEditSelectedFile: noop,
     triggerRefreshCurrentInput: noop,
     ...overrides,
@@ -150,7 +153,16 @@ describe("buildAppMenus", () => {
       "Next annotated file",
       "Previous annotated file",
     ]);
-    expect(items(menus.navigate).map((item) => item.hint)).toEqual(["[", "]", "{", "}", "/"]);
+    expect(items(menus.navigate).map((item) => item.hint)).toEqual([
+      "[",
+      "]",
+      "{",
+      "}",
+      "/",
+      "v",
+      "<",
+      ">",
+    ]);
   });
 
   test("every item carries the id of the command it runs", () => {

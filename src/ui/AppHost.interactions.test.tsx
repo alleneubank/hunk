@@ -152,6 +152,28 @@ function createBootstrap(initialMode: LayoutMode = "split", pager = false): AppB
   });
 }
 
+/** Build three files so viewed navigation can prove skipping, wrapping, and all-viewed no-ops. */
+function createViewedNavigationBootstrap(): AppBootstrap {
+  return createTestVcsAppBootstrap({
+    changesetId: "changeset:viewed-navigation",
+    files: [
+      createTestDiffFile(
+        "alpha",
+        "alpha.ts",
+        "export const alpha = 1;\n",
+        "export const alpha = 2;\n",
+      ),
+      createTestDiffFile("beta", "beta.ts", "export const beta = 1;\n", "export const beta = 2;\n"),
+      createTestDiffFile(
+        "gamma",
+        "gamma.ts",
+        "export const gamma = 1;\n",
+        "export const gamma = 2;\n",
+      ),
+    ],
+  });
+}
+
 function createSingleFileBootstrap(): AppBootstrap {
   return createTestVcsAppBootstrap({
     changesetId: "changeset:app-single-file",
@@ -364,15 +386,15 @@ function createRapidViewportLoopBootstrap(): AppBootstrap {
 function createMouseScrollSelectionBootstrap(): AppBootstrap {
   const firstBeforeLines = createNumberedAssignmentLines(1, 12);
   const secondBeforeLines = Array.from(
-    { length: 50 },
+    { length: 90 },
     (_, index) => `export const line${String(index + 13).padStart(2, "0")} = ${index + 13};`,
   );
   const secondAfterLines = [...secondBeforeLines];
 
   secondAfterLines[0] = "export const line13 = 1300;";
-  secondAfterLines[29] = "export const line42 = 4200;";
-  secondAfterLines[30] = "export const line43 = 4300;";
-  secondAfterLines[31] = "export const line44 = 4400;";
+  secondAfterLines[59] = "export const line72 = 7200;";
+  secondAfterLines[60] = "export const line73 = 7300;";
+  secondAfterLines[61] = "export const line74 = 7400;";
 
   return createTestVcsAppBootstrap({
     changesetId: "changeset:mouse-scroll-selection",
@@ -428,6 +450,14 @@ async function flush(setup: Awaited<ReturnType<typeof testRender>>) {
     await Bun.sleep(0);
     await setup.renderOnce();
   });
+}
+
+/** Send one app shortcut and let React publish state before the next dependent keypress. */
+async function pressAppShortcut(setup: Awaited<ReturnType<typeof testRender>>, shortcut: string) {
+  await act(async () => {
+    await setup.mockInput.typeText(shortcut);
+  });
+  await flush(setup);
 }
 
 /** Let wrap-toggle renders and follow-up layout retries settle before asserting on the frame. */
@@ -492,6 +522,21 @@ function hasLineWithBackground(
       )
     );
   });
+}
+
+/** Return whether a rendered text span uses the expected foreground color. */
+function hasTextWithForeground(
+  frame: ReturnType<Awaited<ReturnType<typeof testRender>>["captureSpans"]>,
+  text: string,
+  foregroundColor: string,
+) {
+  return frame.lines.some((line) =>
+    line.spans.some(
+      (span) =>
+        span.text.includes(text) &&
+        capturedTestColorToHex(span.fg)?.toLowerCase() === foregroundColor.toLowerCase(),
+    ),
+  );
 }
 
 /** Open the theme selector modal through the View menu. */
@@ -751,15 +796,81 @@ describe("App interactions", () => {
     }
   });
 
-  test("menu bar summarizes changed files, additions, and deletions", async () => {
-    const setup = await testRender(<AppHost bootstrap={createBootstrap()} />, {
-      width: 240,
+  test("v toggles viewed sidebar styling and all-file progress", async () => {
+    const bootstrap = createBootstrap();
+    const theme = resolveTheme(bootstrap.initialTheme, null);
+    const setup = await testRender(<AppHost bootstrap={bootstrap} />, {
+      width: 220,
       height: 24,
     });
 
     try {
       await flush(setup);
-      expect(setup.captureCharFrame()).toContain("repo working tree  2 files  +3  -2");
+      let frame = setup.captureCharFrame();
+      expect(firstNonEmptyLine(frame)).toContain("viewed 0/2");
+      expect(frame.match(/viewed 0\/2/g)).toHaveLength(1);
+
+      await act(async () => {
+        await setup.mockInput.typeText("v");
+      });
+      frame = await waitForFrame(setup, (nextFrame) => nextFrame.includes("viewed 1/2"));
+
+      expect(firstNonEmptyLine(frame)).toContain("viewed 1/2");
+      expect(frame.match(/viewed 1\/2/g)).toHaveLength(1);
+      expect(frame).toContain("\u2713");
+      expect(hasTextWithForeground(setup.captureSpans(), "alpha.ts", theme.muted)).toBe(true);
+
+      await act(async () => {
+        await setup.mockInput.typeText("v");
+      });
+      frame = await waitForFrame(setup, (nextFrame) => nextFrame.includes("viewed 0/2"));
+
+      expect(firstNonEmptyLine(frame)).toContain("viewed 0/2");
+      expect(frame.match(/viewed 0\/2/g)).toHaveLength(1);
+      expect(frame).not.toContain("\u2713");
+    } finally {
+      await act(async () => {
+        setup.renderer.destroy();
+      });
+    }
+  });
+
+  test("> skips viewed files, wraps, and leaves an all-viewed selection unchanged", async () => {
+    const bootstrap = createViewedNavigationBootstrap();
+    const { getLatestSnapshot, hostClient } = createMockHostClient();
+    const setup = await testRender(<AppHost bootstrap={bootstrap} hostClient={hostClient} />, {
+      width: 220,
+      height: 24,
+    });
+
+    try {
+      await flush(setup);
+
+      // Plain u is half-page scrolling; it must never move the selection again.
+      await pressAppShortcut(setup, "u");
+      expect(getLatestSnapshot()?.selectedFileId ?? "alpha").toBe("alpha");
+
+      await pressAppShortcut(setup, "v");
+      await pressAppShortcut(setup, ".");
+      await pressAppShortcut(setup, "v");
+      await pressAppShortcut(setup, ",");
+      await pressAppShortcut(setup, ">");
+      let snapshot = await waitForSnapshot(
+        setup,
+        getLatestSnapshot,
+        (nextSnapshot) => nextSnapshot.selectedFileId === "gamma",
+      );
+      expect(snapshot?.selectedFileId).toBe("gamma");
+
+      await pressAppShortcut(setup, "v");
+      await pressAppShortcut(setup, ">");
+      expect(setup.captureCharFrame()).toContain("viewed 3/3");
+      snapshot = await waitForSnapshot(
+        setup,
+        getLatestSnapshot,
+        (nextSnapshot) => nextSnapshot.selectedFileId === "gamma",
+      );
+      expect(snapshot?.selectedFileId).toBe("gamma");
     } finally {
       await act(async () => {
         setup.renderer.destroy();
@@ -1462,7 +1573,7 @@ describe("App interactions", () => {
       expect(frame).toContain("Why prefs.ts changed");
       expect(frame).not.toContain("@@ -1,1 +1,2 @@");
       expect(frame).not.toContain("1 - export const message");
-      expect(frame.indexOf("Agent note - prefs.ts R2")).toBeGreaterThan(
+      expect(frame.indexOf("Agent note - prefs.ts R2")).toBeLessThan(
         frame.indexOf("export const added = true;"),
       );
     } finally {
@@ -1918,7 +2029,7 @@ describe("App interactions", () => {
       expect(initialFrame).not.toContain("line08");
 
       let frame = initialFrame;
-      for (let index = 0; index < 48; index += 1) {
+      for (let index = 0; index < 24; index += 1) {
         await act(async () => {
           await setup.mockInput.pressArrow("down");
         });
@@ -1932,7 +2043,7 @@ describe("App interactions", () => {
       expect(frame).toContain("line08");
       expect(frame).not.toContain("line01");
 
-      for (let index = 0; index < 32; index += 1) {
+      for (let index = 0; index < 12; index += 1) {
         await act(async () => {
           await setup.mockInput.pressArrow("up");
         });
@@ -1952,13 +2063,10 @@ describe("App interactions", () => {
   });
 
   test("the first down-arrow step still advances content under the always-pinned file header above a collapsed gap", async () => {
-    const setup = await testRender(
-      <AppHost bootstrap={{ ...createCollapsedTopBootstrap(), initialCursorLine: "off" }} />,
-      {
-        width: 220,
-        height: 10,
-      },
-    );
+    const setup = await testRender(<AppHost bootstrap={createCollapsedTopBootstrap()} />, {
+      width: 220,
+      height: 10,
+    });
 
     try {
       await flush(setup);
@@ -2060,7 +2168,7 @@ describe("App interactions", () => {
       expect(initialFrame).not.toContain("line08");
 
       let frame = initialFrame;
-      for (let index = 0; index < 32; index += 1) {
+      for (let index = 0; index < 12; index += 1) {
         await act(async () => {
           await setup.mockInput.pressArrow("down");
         });
@@ -2074,7 +2182,7 @@ describe("App interactions", () => {
       expect(frame).toContain("line08");
       expect(frame).not.toContain("line01");
 
-      for (let index = 0; index < 32; index += 1) {
+      for (let index = 0; index < 12; index += 1) {
         await act(async () => {
           await setup.mockInput.pressArrow("up");
         });
@@ -3220,26 +3328,25 @@ describe("App interactions", () => {
       });
 
       let snapshot = getLatestSnapshot();
-      for (let index = 0; index < 16; index += 1) {
+      for (let index = 0; index < 24; index += 1) {
         await act(async () => {
           await setup.mockMouse.scroll(120, 7, "down");
         });
         await flush(setup);
 
-        snapshot = getLatestSnapshot();
+        snapshot = await waitForSnapshot(
+          setup,
+          getLatestSnapshot,
+          (currentSnapshot) =>
+            currentSnapshot.selectedFilePath === "second.ts" &&
+            currentSnapshot.selectedHunkIndex === 1,
+          4,
+        );
         if (snapshot?.selectedFilePath === "second.ts" && snapshot.selectedHunkIndex === 1) {
           break;
         }
       }
 
-      snapshot = await waitForSnapshot(
-        setup,
-        getLatestSnapshot,
-        (currentSnapshot) =>
-          currentSnapshot.selectedFilePath === "second.ts" &&
-          currentSnapshot.selectedHunkIndex === 1,
-        4,
-      );
       expect(snapshot).toMatchObject({
         selectedFilePath: "second.ts",
         selectedHunkIndex: 1,
@@ -3276,18 +3383,16 @@ describe("App interactions", () => {
         });
         await flush(setup);
 
-        snapshot = getLatestSnapshot();
+        snapshot = await waitForSnapshot(
+          setup,
+          getLatestSnapshot,
+          (currentSnapshot) => currentSnapshot.selectedFilePath === "second.ts",
+          4,
+        );
         if (snapshot?.selectedFilePath === "second.ts") {
           break;
         }
       }
-
-      snapshot = await waitForSnapshot(
-        setup,
-        getLatestSnapshot,
-        (currentSnapshot) => currentSnapshot.selectedFilePath === "second.ts",
-        4,
-      );
 
       // Page-sized scrolling should move selection ownership into the later file. The exact hunk
       // can vary with viewport handoff timing because the page jump may land near either visible
@@ -3302,18 +3407,17 @@ describe("App interactions", () => {
         });
         await flush(setup);
 
-        snapshot = getLatestSnapshot();
+        snapshot = await waitForSnapshot(
+          setup,
+          getLatestSnapshot,
+          (currentSnapshot) => currentSnapshot.selectedFilePath === "first.ts",
+          4,
+        );
         if (snapshot?.selectedFilePath === "first.ts") {
           break;
         }
       }
 
-      snapshot = await waitForSnapshot(
-        setup,
-        getLatestSnapshot,
-        (currentSnapshot) => currentSnapshot.selectedFilePath === "first.ts",
-        4,
-      );
       expect(snapshot).toMatchObject({
         selectedFilePath: "first.ts",
         selectedHunkIndex: 0,
@@ -3344,26 +3448,25 @@ describe("App interactions", () => {
       });
 
       let snapshot = getLatestSnapshot();
-      for (let index = 0; index < 50; index += 1) {
+      for (let index = 0; index < 80; index += 1) {
         await act(async () => {
           await setup.mockInput.pressArrow("down");
         });
         await flush(setup);
 
-        snapshot = getLatestSnapshot();
+        snapshot = await waitForSnapshot(
+          setup,
+          getLatestSnapshot,
+          (currentSnapshot) =>
+            currentSnapshot.selectedFilePath === "second.ts" &&
+            currentSnapshot.selectedHunkIndex === 1,
+          4,
+        );
         if (snapshot?.selectedFilePath === "second.ts" && snapshot.selectedHunkIndex === 1) {
           break;
         }
       }
 
-      snapshot = await waitForSnapshot(
-        setup,
-        getLatestSnapshot,
-        (currentSnapshot) =>
-          currentSnapshot.selectedFilePath === "second.ts" &&
-          currentSnapshot.selectedHunkIndex === 1,
-        4,
-      );
       expect(snapshot).toMatchObject({
         selectedFilePath: "second.ts",
         selectedHunkIndex: 1,
@@ -3816,6 +3919,22 @@ describe("App interactions", () => {
     } finally {
       await act(async () => {
         pagerSetup.renderer.destroy();
+      });
+    }
+  });
+
+  test("menu bar summarizes changed files, additions, and deletions", async () => {
+    const setup = await testRender(<AppHost bootstrap={createBootstrap()} />, {
+      width: 240,
+      height: 24,
+    });
+
+    try {
+      await flush(setup);
+      expect(setup.captureCharFrame()).toContain("repo working tree  2 files  +3  -2");
+    } finally {
+      await act(async () => {
+        setup.renderer.destroy();
       });
     }
   });

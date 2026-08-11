@@ -22,6 +22,7 @@ import {
   saveViewPreferencesPromptPreference,
 } from "../core/config";
 import { experimentalFeatureEnabled, resolveExperimentalDiffFiles } from "../core/experimental";
+import { resolveReviewStoreRepoRoot } from "../core/reviewStore";
 import { DEFAULT_TAB_WIDTH } from "../core/tabWidth";
 import type {
   AppBootstrap,
@@ -81,6 +82,7 @@ import { useExtensionNotifications } from "./hooks/useExtensionNotifications";
 import { useHunkSessionBridge } from "./hooks/useHunkSessionBridge";
 import { useMenuController } from "./hooks/useMenuController";
 import { useReviewController, type AgentNoteGeometrySnapshot } from "./hooks/useReviewController";
+import { useViewedStatePersistence } from "./hooks/useViewedStatePersistence";
 import { useWatchedInput, type WatchedInputRuntime } from "./hooks/useWatchedInput";
 import { agentNoteMarkupWidth } from "./lib/agentNoteGeometry";
 import {
@@ -221,6 +223,7 @@ export function App({
     () => resolveExperimentalDiffFiles(bootstrap.changeset.files, bootstrap.input.options),
     [bootstrap.changeset.files, bootstrap.input.options.experimental],
   );
+  const viewedStateRepoRoot = useMemo(() => resolveReviewStoreRepoRoot(bootstrap), [bootstrap]);
   const renderer = useRenderer();
   const terminal = useTerminalDimensions();
   const diffScrollRef = useRef<ScrollBoxRenderable | null>(null);
@@ -369,6 +372,12 @@ export function App({
     noteGeometry: noteGeometryRef,
     stmlEnabled,
   });
+  useViewedStatePersistence({
+    repoRoot: viewedStateRepoRoot,
+    files: reviewFiles,
+    viewedFileIds: review.viewedFileIds,
+    replaceViewedFileIds: review.replaceViewedFileIds,
+  });
   const filteredFiles = review.visibleFiles;
   const selectedFile = review.selectedFile;
   const selectedHunkIndex = review.selectedHunkIndex;
@@ -390,10 +399,21 @@ export function App({
   // keypress even in sessions where no pane is showing and no command fires.
   const extensionViewsCacheRef = useRef<{
     source: typeof filteredFiles;
+    viewedFileIds: ReadonlySet<string>;
     views: ReturnType<typeof toReadOnlyFileViews>;
   } | null>(null);
-  const extensionSelectionInputsRef = useRef({ filteredFiles, selectedFileId, selectedHunkIndex });
-  extensionSelectionInputsRef.current = { filteredFiles, selectedFileId, selectedHunkIndex };
+  const extensionSelectionInputsRef = useRef({
+    filteredFiles,
+    selectedFileId,
+    selectedHunkIndex,
+    viewedFileIds: review.viewedFileIds,
+  });
+  extensionSelectionInputsRef.current = {
+    filteredFiles,
+    selectedFileId,
+    selectedHunkIndex,
+    viewedFileIds: review.viewedFileIds,
+  };
   // What `ctx.workspace` decides against, re-read on every render because a soft
   // reload swaps the bootstrap under a mounted App: the input can change what is
   // writable at all, and the changeset decides which ids exist and which source
@@ -408,14 +428,20 @@ export function App({
   const extensionWorkspaceInputsRef = useRef(extensionWorkspaceInputs);
   extensionWorkspaceInputsRef.current = extensionWorkspaceInputs;
   const getExtensionFileViews = useCallback(() => {
-    const source = extensionSelectionInputsRef.current.filteredFiles;
+    const { filteredFiles: source, viewedFileIds } = extensionSelectionInputsRef.current;
     const cache = extensionViewsCacheRef.current;
-    if (cache && cache.source === source) {
+    // Viewed state changes without `filteredFiles` changing identity, so it has to
+    // take part in the cache key or the sidebar would keep drawing stale badges.
+    if (cache && cache.source === source && cache.viewedFileIds === viewedFileIds) {
       return cache.views;
     }
 
-    const views = toReadOnlyFileViews(source);
-    extensionViewsCacheRef.current = { source, views };
+    // Review progress rides the same frozen view every extension surface reads, so
+    // the sidebar's viewed badge can never disagree with the app's own state.
+    const views = toReadOnlyFileViews(
+      source.map((file) => ({ ...file, viewed: viewedFileIds.has(file.id) })),
+    );
+    extensionViewsCacheRef.current = { source, viewedFileIds, views };
     return views;
   }, []);
   // Navigation callbacks for extension command handlers. The focus and jump
@@ -476,6 +502,14 @@ export function App({
   const moveToAnnotatedFile = review.moveToAnnotatedFile;
   const moveToAnnotatedHunk = review.moveToAnnotatedHunk;
   const moveToFile = review.moveToFile;
+  const moveToUnviewedFile = review.moveToUnviewedFile;
+  const selectedFileViewed = Boolean(
+    review.selectedFile && review.viewedFileIds.has(review.selectedFile.id),
+  );
+  const viewedProgressText =
+    review.totalFileCount > 0
+      ? `viewed ${review.viewedFileCount}/${review.totalFileCount}`
+      : undefined;
 
   const jumpToFile = useCallback(
     (fileId: string, nextHunkIndex = 0, options?: { alignFileHeaderTop?: boolean }) => {
@@ -1063,6 +1097,7 @@ export function App({
     addLiveComment: review.addLiveComment,
     addLiveCommentBatch: review.addLiveCommentBatch,
     clearLiveComments: review.clearLiveComments,
+    files: bootstrap.changeset.files,
     hostClient,
     liveCommentCount: review.liveCommentCount,
     liveCommentSummaries: review.liveCommentSummaries,
@@ -1073,10 +1108,14 @@ export function App({
     removeLiveComment: review.removeLiveComment,
     reviewNoteCount: review.reviewNoteCount,
     reviewNoteSummaries: review.reviewNoteSummaries,
+    setFileViewed: review.setFileViewed,
     selectedFile,
     selectedHunk: review.selectedHunk,
     selectedHunkIndex,
     showAgentNotes,
+    totalFileCount: review.totalFileCount,
+    viewedFileCount: review.viewedFileCount,
+    viewedFileIds: review.viewedFileIds,
   });
   const maxVisibleLineNumber = useMemo(
     () =>
@@ -1757,6 +1796,7 @@ export function App({
       moveToAnnotatedHunk,
       moveToFile,
       moveToHunk: review.moveToHunk,
+      moveToUnviewedFile,
       openAgentSkill,
       openThemeSelector,
       requestQuit,
@@ -1767,6 +1807,7 @@ export function App({
       selectCursorLine: setCursorLine,
       selectLayoutMode,
       startUserNote: () => startUserNote(),
+      toggleViewedForSelectedFile: review.toggleViewedForSelectedFile,
       toggleAgentNotes,
       toggleCopyDecorations,
       toggleFocusArea,
@@ -1808,6 +1849,7 @@ export function App({
     copyDecorations,
     layoutMode,
     renderSidebar,
+    selectedFileViewed,
     showAgentNotes,
     showHelp,
     showHunkHeaders,
@@ -1996,6 +2038,7 @@ export function App({
           terminalWidth={terminal.width}
           theme={activeTheme}
           topTitle={topTitle}
+          viewedProgressText={viewedProgressText}
           onHoverMenu={(menuId) => {
             if (activeMenuId) {
               openMenu(menuId);

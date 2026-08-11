@@ -47,6 +47,8 @@ export function summarizeReviewFile(reviewFile: SessionReviewFile): SessionFileS
     additions: reviewFile.additions,
     deletions: reviewFile.deletions,
     hunkCount: reviewFile.hunkCount,
+    changeType: reviewFile.changeType,
+    agentSummary: reviewFile.agentSummary,
   };
 }
 
@@ -105,6 +107,8 @@ export function buildSelectedHunkSessionContext(session: ListedSession): Selecte
     showAgentNotes: session.snapshot.state.showAgentNotes,
     noteMarkupWidth: session.snapshot.state.noteMarkupWidth,
     liveCommentCount: session.snapshot.state.liveCommentCount,
+    viewedFileCount: session.snapshot.state.viewedFileCount ?? 0,
+    viewedFilePaths: session.snapshot.state.viewedFilePaths ?? [],
   };
 }
 
@@ -124,6 +128,7 @@ export function buildHunkSessionReview(
     repoRoot: entry.registration.repoRoot,
     inputKind: entry.registration.info.inputKind,
     experimentalFeatures: entry.registration.info.experimentalFeatures ?? [],
+    agentSummary: entry.registration.info.agentSummary,
     selectedFile: selectedFile ? serializeReviewFile(selectedFile, includePatch) : null,
     selectedHunk: selectedFile
       ? (selectedFile.hunks[entry.snapshot.state.selectedHunkIndex] ?? null)
@@ -133,6 +138,8 @@ export function buildHunkSessionReview(
     reviewNoteCount:
       entry.snapshot.state.reviewNoteCount ?? entry.snapshot.state.reviewNotes?.length ?? 0,
     reviewNotes: options.includeNotes ? (entry.snapshot.state.reviewNotes ?? []) : undefined,
+    viewedFileCount: entry.snapshot.state.viewedFileCount ?? 0,
+    viewedFilePaths: entry.snapshot.state.viewedFilePaths ?? [],
     files: entry.registration.info.files.map((file) => serializeReviewFile(file, includePatch)),
   };
 }

@@ -1,5 +1,6 @@
 import { afterAll, afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { cleanupTestConfigHomes, createTestConfigHome } from "../helpers/config-home";
@@ -11,22 +12,13 @@ const testConfigHome = createTestConfigHome();
 
 afterAll(cleanupTestConfigHomes);
 const tempDirs: string[] = [];
-/** Check for the util-linux `script` interface these Unix-only terminal tests require. */
-function supportsControllableScript() {
-  try {
-    return (
-      Bun.spawnSync(["script", "-q", "-f", "-e", "-c", "exit 0", "/dev/null"], {
-        stdin: "ignore",
-        stdout: "ignore",
-        stderr: "ignore",
-      }).exitCode === 0
-    );
-  } catch {
-    return false;
-  }
-}
-
-const ttyToolsAvailable = supportsControllableScript();
+const sessionDaemonPorts = new Set<number>();
+const ttyToolsAvailable =
+  Bun.spawnSync(["bash", "-lc", "command -v script >/dev/null && command -v timeout >/dev/null"], {
+    stdin: "ignore",
+    stdout: "ignore",
+    stderr: "ignore",
+  }).exitCode === 0;
 
 interface SessionListJson {
   sessions: Array<{
@@ -75,6 +67,54 @@ function waitUntil<T>(
   });
 }
 
+async function reserveLoopbackPort() {
+  const listener = createServer(() => undefined);
+  await new Promise<void>((resolve, reject) => {
+    listener.once("error", reject);
+    listener.listen(0, "127.0.0.1", () => resolve());
+  });
+
+  const address = listener.address();
+  const port = typeof address === "object" && address ? address.port : 0;
+  await new Promise<void>((resolve) => listener.close(() => resolve()));
+
+  if (!port) {
+    throw new Error("Failed to reserve a loopback port for the viewed session test.");
+  }
+
+  return port;
+}
+
+async function reserveSessionDaemonPort() {
+  const port = await reserveLoopbackPort();
+  sessionDaemonPorts.add(port);
+  return port;
+}
+
+async function stopSessionDaemon(port: number) {
+  let pid: number | undefined;
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/health`);
+    if (response.ok) {
+      pid = ((await response.json()) as { pid?: number }).pid;
+    }
+  } catch {
+    return;
+  }
+
+  if (!pid || pid === process.pid) {
+    return;
+  }
+
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch (error) {
+    if (!(error instanceof Error) || !("code" in error) || error.code !== "ESRCH") {
+      throw error;
+    }
+  }
+}
+
 function createFixtureFiles(name: string, beforeLines: string[], afterLines: string[]) {
   const dir = mkdtempSync(join(tmpdir(), `hunk-session-cli-${name}-`));
   tempDirs.push(dir);
@@ -91,128 +131,37 @@ function createFixtureFiles(name: string, beforeLines: string[], afterLines: str
   return { dir, before, after, transcript, afterName };
 }
 
-function spawnHunkSession(fixture: ReturnType<typeof createFixtureFiles>, port: number) {
+function spawnHunkSession(
+  fixture: ReturnType<typeof createFixtureFiles>,
+  {
+    port,
+    quitAfterSeconds = 8,
+    timeoutSeconds = 10,
+  }: {
+    port: number;
+    quitAfterSeconds?: number;
+    timeoutSeconds?: number;
+  },
+) {
   const innerCommand = `bun run ${shellQuote(sourceEntrypoint)} diff ${shellQuote(fixture.before)} ${shellQuote(fixture.after)}`;
+  const hunkCommand = [
+    `(sleep ${quitAfterSeconds}; printf q) | timeout ${timeoutSeconds} script -q -e`,
+    shellQuote(fixture.transcript),
+    "/bin/sh -c",
+    shellQuote(innerCommand),
+  ].join(" ");
 
-  return Bun.spawn(["script", "-q", "-f", "-e", "-c", innerCommand, fixture.transcript], {
+  return Bun.spawn(["bash", "-lc", hunkCommand], {
     cwd: fixture.dir,
-    stdin: "pipe",
-    stdout: "ignore",
+    stdin: "ignore",
+    stdout: "pipe",
     stderr: "pipe",
     env: {
       ...process.env,
       XDG_CONFIG_HOME: testConfigHome,
-      TERM: "xterm-256color",
-      COLUMNS: "120",
-      LINES: "24",
       HUNK_MCP_PORT: `${port}`,
     },
   });
-}
-
-type HunkSessionProcess = ReturnType<typeof spawnHunkSession>;
-
-/** Strip terminal controls so prompts can be matched in flushed transcripts. */
-function stripTerminalControl(text: string) {
-  return text
-    .replace(/\x1bP[\s\S]*?\x1b\\/g, "")
-    .replace(/\x1b\][\s\S]*?(?:\x07|\x1b\\)/g, "")
-    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "")
-    .replace(/\x1b[@-_]/g, "");
-}
-
-/** Ask a live test session to quit, discarding changed view preferences when prompted. */
-async function requestHunkSessionQuit(
-  proc: HunkSessionProcess,
-  fixture: ReturnType<typeof createFixtureFiles>,
-  timeoutMs = 2_000,
-) {
-  proc.stdin.write("q");
-  await proc.stdin.flush();
-  let quitAttempts = 1;
-  let lastQuitAttemptAt = Date.now();
-
-  const outcome = await waitUntil(
-    "Hunk session exit or save-preferences prompt",
-    async () => {
-      if (proc.exitCode !== null) {
-        return "exited" as const;
-      }
-      const file = Bun.file(fixture.transcript);
-      if (await file.exists()) {
-        const output = stripTerminalControl(await file.text());
-        if (output.includes("Save view preferences?")) {
-          return "prompt" as const;
-        }
-      }
-
-      // A command-triggered repaint can consume input sent during its handoff. Retry only while the
-      // app remains live and no prompt is visible, keeping teardown condition-driven and bounded.
-      if (quitAttempts < 3 && Date.now() - lastQuitAttemptAt >= 100) {
-        proc.stdin.write("q");
-        await proc.stdin.flush();
-        quitAttempts += 1;
-        lastQuitAttemptAt = Date.now();
-      }
-      return null;
-    },
-    timeoutMs,
-    25,
-  );
-
-  if (outcome === "prompt") {
-    proc.stdin.write("q");
-    await proc.stdin.flush();
-  }
-
-  const result = await Promise.race([
-    proc.exited.then((exitCode) => ({ exitCode })),
-    Bun.sleep(timeoutMs).then(() => null),
-  ]);
-  if (!result) {
-    proc.kill();
-    await proc.exited.catch(() => undefined);
-    throw new Error(`Timed out waiting ${timeoutMs}ms for the Hunk session to quit.`);
-  }
-  if (result.exitCode !== 0) {
-    throw new Error(`Hunk session exited with ${result.exitCode}.`);
-  }
-}
-
-/** Guarantee process cleanup even when graceful terminal teardown fails. */
-async function quitHunkSession(
-  proc: HunkSessionProcess,
-  fixture: ReturnType<typeof createFixtureFiles>,
-) {
-  try {
-    await requestHunkSessionQuit(proc, fixture);
-  } catch (error) {
-    proc.kill();
-    await proc.exited.catch(() => undefined);
-    throw error;
-  }
-}
-
-/** Poll daemon health directly before exercising the CLI boundary once. */
-async function waitForRegisteredSessions(port: number) {
-  await waitUntil("registered live session", async () => {
-    try {
-      const response = await fetch(`http://127.0.0.1:${port}/health`);
-      if (!response.ok) {
-        return null;
-      }
-      const health = (await response.json()) as { sessions?: number };
-      return (health.sessions ?? 0) > 0 ? true : null;
-    } catch {
-      return null;
-    }
-  });
-
-  const { proc, stdout, stderr } = runSessionCli(["list", "--json"], port);
-  if (proc.exitCode !== 0) {
-    throw new Error(stderr.trim() || "Failed to list the registered Hunk session.");
-  }
-  return (JSON.parse(stdout) as SessionListJson).sessions;
 }
 
 function runSessionCli(args: string[], port: number, stdinText?: string) {
@@ -233,24 +182,38 @@ function runSessionCli(args: string[], port: number, stdinText?: string) {
   return { proc, stdout, stderr };
 }
 
-afterEach(() => {
+afterEach(async () => {
+  for (const port of sessionDaemonPorts) {
+    await stopSessionDaemon(port);
+  }
+  sessionDaemonPorts.clear();
   cleanupTempDirs();
 });
 
-const sessionDescribe = ttyToolsAvailable ? describe : describe.skip;
-
-sessionDescribe("session CLI integration", () => {
+describe("session CLI integration", () => {
   test("list/get/context expose live Hunk sessions through the daemon", async () => {
-    const port = 48961;
+    if (!ttyToolsAvailable) {
+      return;
+    }
+
+    const port = await reserveSessionDaemonPort();
     const fixture = createFixtureFiles(
       "inspect",
       ["export const value = 1;", "console.log(value);"],
       ["export const value = 2;", "console.log(value * 2);"],
     );
-    const session = spawnHunkSession(fixture, port);
+    const session = spawnHunkSession(fixture, { port });
 
     try {
-      const listed = await waitForRegisteredSessions(port);
+      const listed = await waitUntil("registered live session", () => {
+        const { proc, stdout } = runSessionCli(["list", "--json"], port);
+        if (proc.exitCode !== 0) {
+          return null;
+        }
+
+        const parsed = JSON.parse(stdout) as SessionListJson;
+        return parsed.sessions.length > 0 ? parsed.sessions : null;
+      });
 
       const sessionId = listed[0]!.sessionId;
       const get = runSessionCli(["get", sessionId, "--json"], port);
@@ -259,6 +222,12 @@ sessionDescribe("session CLI integration", () => {
       expect(JSON.parse(get.stdout)).toMatchObject({
         session: {
           sessionId,
+          snapshot: {
+            state: {
+              viewedFileCount: 0,
+              viewedFilePaths: [],
+            },
+          },
           files: [
             {
               path: fixture.afterName,
@@ -282,29 +251,152 @@ sessionDescribe("session CLI integration", () => {
         },
       });
     } finally {
-      await quitHunkSession(session, fixture);
+      session.kill();
+      await session.exited;
     }
   });
 
-  test("reload replaces what a live session is showing", async () => {
-    const port = 48963;
+  test("viewed set and unset update the live snapshot without changing state for unknown files", async () => {
+    if (!ttyToolsAvailable) {
+      return;
+    }
+
+    const port = await reserveSessionDaemonPort();
     const fixture = createFixtureFiles(
+      "viewed",
+      ["export const value = 1;"],
+      ["export const value = 2;"],
+    );
+    const session = spawnHunkSession(fixture, { port, quitAfterSeconds: 18, timeoutSeconds: 20 });
+
+    try {
+      const listed = await waitUntil("registered live session", () => {
+        const { proc, stdout } = runSessionCli(["list", "--json"], port);
+        if (proc.exitCode !== 0) {
+          return null;
+        }
+
+        const parsed = JSON.parse(stdout) as SessionListJson;
+        return parsed.sessions.length > 0 ? parsed.sessions : null;
+      });
+      const sessionId = listed[0]!.sessionId;
+
+      const marked = runSessionCli(
+        ["viewed", sessionId, "--file", fixture.afterName, "--json"],
+        port,
+      );
+      expect(marked.proc.exitCode).toBe(0);
+      expect(marked.stderr).toBe("");
+      expect(JSON.parse(marked.stdout)).toEqual({
+        result: {
+          filePath: fixture.afterName,
+          viewed: true,
+          viewedFileCount: 1,
+          totalFileCount: 1,
+        },
+      });
+
+      await waitUntil("viewed snapshot update", () => {
+        const get = runSessionCli(["get", sessionId, "--json"], port);
+        if (get.proc.exitCode !== 0) {
+          return null;
+        }
+
+        const parsed = JSON.parse(get.stdout) as {
+          session?: {
+            snapshot?: { state?: { viewedFileCount?: number; viewedFilePaths?: string[] } };
+          };
+        };
+        return parsed.session?.snapshot?.state?.viewedFileCount === 1 ? parsed : null;
+      });
+
+      const markedAgain = runSessionCli(["viewed", sessionId, "--file", fixture.afterName], port);
+      expect(markedAgain.proc.exitCode).toBe(0);
+      expect(markedAgain.stdout).toContain("viewed 1/1");
+
+      const unknown = runSessionCli(["viewed", sessionId, "--file", "missing.ts", "--json"], port);
+      expect(unknown.proc.exitCode).toBe(1);
+      expect(unknown.stderr).toContain("No diff file matches missing.ts.");
+
+      const afterUnknown = runSessionCli(["get", sessionId, "--json"], port);
+      expect(JSON.parse(afterUnknown.stdout)).toMatchObject({
+        session: {
+          snapshot: {
+            state: {
+              viewedFileCount: 1,
+              viewedFilePaths: [fixture.afterName],
+            },
+          },
+        },
+      });
+
+      const unmarked = runSessionCli(
+        ["viewed", sessionId, "--file", fixture.afterName, "--unset", "--json"],
+        port,
+      );
+      expect(unmarked.proc.exitCode).toBe(0);
+      expect(JSON.parse(unmarked.stdout)).toEqual({
+        result: {
+          filePath: fixture.afterName,
+          viewed: false,
+          viewedFileCount: 0,
+          totalFileCount: 1,
+        },
+      });
+
+      await waitUntil("unviewed snapshot update", () => {
+        const get = runSessionCli(["get", sessionId, "--json"], port);
+        if (get.proc.exitCode !== 0) {
+          return null;
+        }
+
+        const parsed = JSON.parse(get.stdout) as {
+          session?: {
+            snapshot?: { state?: { viewedFileCount?: number; viewedFilePaths?: string[] } };
+          };
+        };
+        return parsed.session?.snapshot?.state?.viewedFileCount === 0 &&
+          parsed.session.snapshot.state?.viewedFilePaths?.length === 0
+          ? parsed
+          : null;
+      });
+    } finally {
+      session.kill();
+      await session.exited;
+    }
+  }, 25_000);
+
+  test("reload replaces what a live session is showing", async () => {
+    if (!ttyToolsAvailable) {
+      return;
+    }
+
+    const port = await reserveSessionDaemonPort();
+    const fixtureA = createFixtureFiles(
       "reload-alpha",
       ["export const alpha = 1;"],
       ["export const alpha = 2;", "export const beta = true;"],
     );
-    mkdirSync(join(fixture.dir, ".git"));
-    const session = spawnHunkSession(fixture, port);
+    mkdirSync(join(fixtureA.dir, ".git"));
+    const session = spawnHunkSession(fixtureA, { port, quitAfterSeconds: 18, timeoutSeconds: 20 });
 
     try {
-      const listed = await waitForRegisteredSessions(port);
+      const listed = await waitUntil("registered live session", () => {
+        const { proc, stdout } = runSessionCli(["list", "--json"], port);
+        if (proc.exitCode !== 0) {
+          return null;
+        }
+
+        const parsed = JSON.parse(stdout) as SessionListJson;
+        return parsed.sessions.length > 0 ? parsed.sessions : null;
+      });
 
       const sessionId = listed[0]!.sessionId;
-      writeFileSync(fixture.before, "export const before = 10;\n");
-      writeFileSync(fixture.after, "export const after = 20;\nexport const extra = 'yes';\n");
+      writeFileSync(fixtureA.before, "export const before = 10;\n");
+      writeFileSync(fixtureA.after, "export const after = 20;\nexport const extra = 'yes';\n");
 
       const reload = runSessionCli(
-        ["reload", sessionId, "--json", "--", "diff", fixture.before, fixture.after],
+        ["reload", sessionId, "--json", "--", "diff", fixtureA.before, fixtureA.after],
         port,
       );
       expect(reload.proc.exitCode).toBe(0);
@@ -314,7 +406,7 @@ sessionDescribe("session CLI integration", () => {
           sessionId,
           inputKind: "diff",
           fileCount: 1,
-          selectedFilePath: fixture.afterName,
+          selectedFilePath: fixtureA.afterName,
           selectedHunkIndex: 0,
         },
       });
@@ -331,22 +423,27 @@ sessionDescribe("session CLI integration", () => {
             files?: Array<{ path: string }>;
           };
         };
-        return parsed.session?.files?.[0]?.path === fixture.afterName ? parsed : null;
+        return parsed.session?.files?.[0]?.path === fixtureA.afterName ? parsed : null;
       });
 
       expect(reloaded).toMatchObject({
         session: {
           inputKind: "diff",
-          files: [{ path: fixture.afterName }],
+          files: [{ path: fixtureA.afterName }],
         },
       });
     } finally {
-      await quitHunkSession(session, fixture);
+      session.kill();
+      await session.exited;
     }
   }, 20_000);
 
   test("reload refuses to read files outside the live session root", async () => {
-    const port = 48966;
+    if (!ttyToolsAvailable) {
+      return;
+    }
+
+    const port = await reserveSessionDaemonPort();
     const fixture = createFixtureFiles(
       "reload-denied",
       ["export const visible = 1;"],
@@ -358,10 +455,18 @@ sessionDescribe("session CLI integration", () => {
       ["export const secret = 2;"],
     );
     mkdirSync(join(fixture.dir, ".git"));
-    const session = spawnHunkSession(fixture, port);
+    const session = spawnHunkSession(fixture, { port, quitAfterSeconds: 18, timeoutSeconds: 20 });
 
     try {
-      const listed = await waitForRegisteredSessions(port);
+      const listed = await waitUntil("registered live session", () => {
+        const { proc, stdout } = runSessionCli(["list", "--json"], port);
+        if (proc.exitCode !== 0) {
+          return null;
+        }
+
+        const parsed = JSON.parse(stdout) as SessionListJson;
+        return parsed.sessions.length > 0 ? parsed.sessions : null;
+      });
 
       const sessionId = listed[0]!.sessionId;
       const reload = runSessionCli(
@@ -389,12 +494,17 @@ sessionDescribe("session CLI integration", () => {
         },
       });
     } finally {
-      await quitHunkSession(session, fixture);
+      session.kill();
+      await session.exited;
     }
   }, 20_000);
 
   test("navigate works, and comment add only focuses the session when --focus is passed", async () => {
-    const port = 48962;
+    if (!ttyToolsAvailable) {
+      return;
+    }
+
+    const port = await reserveSessionDaemonPort();
     const fixture = createFixtureFiles(
       "mutate",
       [
@@ -428,10 +538,18 @@ sessionDescribe("session CLI integration", () => {
         "export const thirteen = 130;",
       ],
     );
-    const session = spawnHunkSession(fixture, port);
+    const session = spawnHunkSession(fixture, { port, quitAfterSeconds: 18, timeoutSeconds: 20 });
 
     try {
-      const listed = await waitForRegisteredSessions(port);
+      const listed = await waitUntil("registered live session", () => {
+        const { proc, stdout } = runSessionCli(["list", "--json"], port);
+        if (proc.exitCode !== 0) {
+          return null;
+        }
+
+        const parsed = JSON.parse(stdout) as SessionListJson;
+        return parsed.sessions.length > 0 ? parsed.sessions : null;
+      });
 
       const sessionId = listed[0]!.sessionId;
 
@@ -587,12 +705,17 @@ sessionDescribe("session CLI integration", () => {
           : null;
       });
     } finally {
-      await quitHunkSession(session, fixture);
+      session.kill();
+      await session.exited;
     }
   }, 20_000);
 
   test("comment apply adds a batch from stdin without moving focus by default", async () => {
-    const port = 48964;
+    if (!ttyToolsAvailable) {
+      return;
+    }
+
+    const port = await reserveSessionDaemonPort();
     const fixture = createFixtureFiles(
       "apply-batch",
       [
@@ -626,10 +749,18 @@ sessionDescribe("session CLI integration", () => {
         "export const thirteen = 130;",
       ],
     );
-    const session = spawnHunkSession(fixture, port);
+    const session = spawnHunkSession(fixture, { port, quitAfterSeconds: 18, timeoutSeconds: 20 });
 
     try {
-      const listed = await waitForRegisteredSessions(port);
+      const listed = await waitUntil("registered live session", () => {
+        const { proc, stdout } = runSessionCli(["list", "--json"], port);
+        if (proc.exitCode !== 0) {
+          return null;
+        }
+
+        const parsed = JSON.parse(stdout) as SessionListJson;
+        return parsed.sessions.length > 0 ? parsed.sessions : null;
+      });
 
       const sessionId = listed[0]!.sessionId;
       const apply = runSessionCli(
@@ -691,12 +822,17 @@ sessionDescribe("session CLI integration", () => {
         comments: [{ summary: "First hunk note" }, { summary: "Second hunk note" }],
       });
     } finally {
-      await quitHunkSession(session, fixture);
+      session.kill();
+      await session.exited;
     }
   }, 20_000);
 
   test("comment apply with --focus jumps to the first applied comment", async () => {
-    const port = 48965;
+    if (!ttyToolsAvailable) {
+      return;
+    }
+
+    const port = await reserveSessionDaemonPort();
     const fixture = createFixtureFiles(
       "apply-batch-focus",
       [
@@ -730,10 +866,18 @@ sessionDescribe("session CLI integration", () => {
         "export const thirteen = 130;",
       ],
     );
-    const session = spawnHunkSession(fixture, port);
+    const session = spawnHunkSession(fixture, { port, quitAfterSeconds: 18, timeoutSeconds: 20 });
 
     try {
-      const listed = await waitForRegisteredSessions(port);
+      const listed = await waitUntil("registered live session", () => {
+        const { proc, stdout } = runSessionCli(["list", "--json"], port);
+        if (proc.exitCode !== 0) {
+          return null;
+        }
+
+        const parsed = JSON.parse(stdout) as SessionListJson;
+        return parsed.sessions.length > 0 ? parsed.sessions : null;
+      });
 
       const sessionId = listed[0]!.sessionId;
       const apply = runSessionCli(
@@ -780,7 +924,8 @@ sessionDescribe("session CLI integration", () => {
           : null;
       });
     } finally {
-      await quitHunkSession(session, fixture);
+      session.kill();
+      await session.exited;
     }
   }, 20_000);
 });

@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { createTestDiffFile, lines } from "../../../test/helpers/diff-helpers";
-import { buildSidebarEntries, fileLabelParts } from "./files";
+import {
+  buildSidebarEntries,
+  fileLabelParts,
+  sidebarEntryStats,
+  sidebarEntryStatsWidth,
+} from "./files";
 
 describe("files helpers", () => {
   test("buildSidebarEntries hides zero-value sidebar stats", () => {
@@ -143,17 +148,42 @@ describe("files helpers", () => {
     ]);
   });
 
-  test("file labels and sidebar entries render path tabs as fixed-width escapes", () => {
-    const file = createTestDiffFile({ id: "tabbed-path", path: "src/tab\tname.ts" });
+  test("buildSidebarEntries marks only viewed file entries", () => {
+    const alpha = createTestDiffFile({ id: "alpha", path: "src/alpha.ts" });
+    const beta = createTestDiffFile({ id: "beta", path: "src/beta.ts" });
 
-    expect(fileLabelParts(file)).toEqual({
-      filename: "src/tab\\tname.ts",
-      stateLabel: null,
-    });
-    expect(buildSidebarEntries([file])).toEqual([
-      { kind: "group", id: "group:src:0", label: "src/" },
-      expect.objectContaining({ kind: "file", name: "tab\\tname.ts" }),
+    const entries = buildSidebarEntries([alpha, { ...beta, viewed: true }]).filter(
+      (entry) => entry.kind === "file",
+    );
+
+    expect(entries).toHaveLength(2);
+    expect(entries[0]).toMatchObject({ id: "alpha", viewed: false });
+    expect(entries[1]).toMatchObject({ id: "beta", viewed: true });
+  });
+
+  test("sidebar stats place viewed progress before comments and line churn", () => {
+    const [entry] = buildSidebarEntries([
+      {
+        ...createTestDiffFile({
+          id: "viewed",
+          path: "src/viewed.ts",
+          agent: {
+            path: "src/viewed.ts",
+            annotations: [{ summary: "Review note", newRange: [1, 1] }],
+          },
+        }),
+        viewed: true,
+      },
+    ]).filter((item) => item.kind === "file");
+
+    expect(entry).toBeDefined();
+    expect(sidebarEntryStats(entry!)).toEqual([
+      { kind: "viewed", text: "✓" },
+      { kind: "agent-comment", text: "*1" },
+      { kind: "addition", text: "+2" },
+      { kind: "deletion", text: "-2" },
     ]);
+    expect(sidebarEntryStatsWidth(entry!)).toBe("✓ *1 +2 -2".length);
   });
 
   test("fileLabelParts strips parser-added line endings from rename labels", () => {
@@ -172,5 +202,18 @@ describe("files helpers", () => {
       filename: "pi/extensions/loop.ts -> agents/pi/extensions/notify.ts",
       stateLabel: null,
     });
+  });
+
+  test("file labels and sidebar entries render path tabs as fixed-width escapes", () => {
+    const file = createTestDiffFile({ id: "tabbed-path", path: "src/tab\tname.ts" });
+
+    expect(fileLabelParts(file)).toEqual({
+      filename: "src/tab\\tname.ts",
+      stateLabel: null,
+    });
+    expect(buildSidebarEntries([file])).toEqual([
+      { kind: "group", id: "group:src:0", label: "src/" },
+      expect.objectContaining({ kind: "file", name: "tab\\tname.ts" }),
+    ]);
   });
 });
