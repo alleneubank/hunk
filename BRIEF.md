@@ -129,6 +129,18 @@ overturned at the boundary).
   backend while VS Code answered confidently about git. A plausible wrong default is worse
   than none. The adapter operation stays the correct fix if it is ever wanted; a `[review]
 base` config key is the cheaper interim. (2026-08-04, ratified.)
+- Agent-context auto-discovery is **target-keyed**: the conventional file is
+  `.hunk/agent-context.<targetId>.json` for the current review target (working-tree,
+  staged, range expression, show ref, or stash-show ref, plus sorted pathspecs). Bare
+  `.hunk/agent-context.json` is never auto-loaded — only via explicit `--agent-context` or
+  config. Why: a fixed bare path loads notes against the wrong changeset and can partially
+  attach leftover ranges (modem-dev/hunk#540). (2026-08-11, provisional.)
+- Agents obtain the conventional write path from `agentContextPath` on
+  `hunk review export --json` — one machine-readable surface, not a second CLI command and
+  not a memorized hash. (2026-08-11, provisional.)
+- Interaction tests that assert pure viewport scroll set `initialCursorLine: "off"`. Why:
+  the default marker mode remaps arrows to current-line movement, which is a different
+  contract than step-scroll. (2026-08-11, provisional.)
 
 ## Boundary — requires the human
 

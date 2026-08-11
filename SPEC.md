@@ -284,10 +284,10 @@ capture and REQ-REVIEW-008's merge.
 
 ### Agent-context auto-discovery
 
-Addresses maintainer review on modem-dev/hunk#540: a fixed bare sidecar path auto-loads
-notes against the wrong review when the next `hunk diff` / range / show is a different
-target. Humans still run plain commands with no discovery flags; agents write a target-keyed
-filename Hunk derives from the same args.
+Auto-discovery is scoped to the current review target so notes for one range or show do not
+load on another. Humans still run plain commands with no discovery flags; agents write a
+target-keyed filename Hunk derives from the same args (acceptance aligns with
+modem-dev/hunk#540).
 
 - **REQ-AGENT-001** — Auto-discovery, when it runs, loads only
   `.hunk/agent-context.<targetId>.json` for the current review target. Bare
