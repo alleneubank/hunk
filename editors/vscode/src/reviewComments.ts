@@ -204,12 +204,23 @@ export class ReviewCommentSurface {
 
   clear(): void {
     for (const thread of this.threads.splice(0)) {
-      thread.dispose();
+      try {
+        thread.dispose();
+      } catch {
+        // Main thread may already have dropped the thread (controller replaced, host
+        // restart). Never let one stale dispose abort the rebuild — that left the Comments
+        // panel empty while the sidebar still showed counts from session data.
+      }
     }
   }
 
   dispose(): void {
-    this.clear();
-    this.controller.dispose();
+    // Forget local handles first; disposing the controller drops every thread it owns.
+    this.threads.length = 0;
+    try {
+      this.controller.dispose();
+    } catch {
+      // Controller may already be gone if openReview raced a previous dispose.
+    }
   }
 }

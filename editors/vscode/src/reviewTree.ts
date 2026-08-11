@@ -213,6 +213,11 @@ function toTreeItems(draft: DirectoryDraft): ReviewTreeItem[] {
   ];
 }
 
+/** Whether two tree rows name the same review entity across getChildren rebuilds. */
+function sameTreeIdentity(a: ReviewTreeItem, b: ReviewTreeItem): boolean {
+  return a.id !== undefined && a.id === b.id;
+}
+
 /** Sidebar listing every file in the review, in Hunk's order or grouped by directory. */
 export class ReviewTreeProvider implements vscode.TreeDataProvider<ReviewTreeItem> {
   private readonly changed = new vscode.EventEmitter<undefined>();
@@ -301,6 +306,64 @@ export class ReviewTreeProvider implements vscode.TreeDataProvider<ReviewTreeIte
     return this.mode === "tree"
       ? toTreeItems(buildDirectoryDraft(states))
       : states.map((state) => new ReviewFileItem(state));
+  }
+
+  /**
+   * Parent of one row for `TreeView.reveal` in tree mode.
+   *
+   * List mode has no nesting. Walks a fresh tree and matches by stable `id` so rebuilt
+   * items still form a parent chain VS Code can expand.
+   */
+  getParent(element: ReviewTreeItem): ReviewTreeItem | undefined {
+    if (this.mode === "list") {
+      return undefined;
+    }
+
+    const search = (
+      items: ReviewTreeItem[],
+      parent: ReviewTreeItem | undefined,
+    ): ReviewTreeItem | undefined | null => {
+      for (const item of items) {
+        if (sameTreeIdentity(item, element)) {
+          return parent;
+        }
+        if (item instanceof ReviewDirectoryItem) {
+          const nested = search(item.children, item);
+          if (nested !== null) {
+            return nested;
+          }
+        }
+      }
+      return null;
+    };
+
+    const found = search(this.getChildren(), undefined);
+    return found === null ? undefined : found;
+  }
+
+  /**
+   * The visible row for one reviewed path, or nothing when a filter hides it.
+   *
+   * Built from the same `getChildren` walk the view uses, so `TreeView.reveal` receives an
+   * element that still exists in the current tree shape.
+   */
+  findFileItem(path: string): ReviewFileItem | undefined {
+    const search = (items: ReviewTreeItem[]): ReviewFileItem | undefined => {
+      for (const item of items) {
+        if (item instanceof ReviewFileItem && item.state.file.path === path) {
+          return item;
+        }
+        if (item instanceof ReviewDirectoryItem) {
+          const nested = search(item.children);
+          if (nested) {
+            return nested;
+          }
+        }
+      }
+      return undefined;
+    };
+
+    return search(this.getChildren());
   }
 
   /**

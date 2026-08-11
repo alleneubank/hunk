@@ -158,6 +158,28 @@ suite("review sidebar arrangement", () => {
     assert.match(String((item.tooltip as { value?: string }).value), /Only the constant moves\./);
   });
 
+  test("findFileItem and getParent walk list and tree arrangements", () => {
+    const provider = new ReviewTreeProvider(
+      sessionOver(["README.md", "src/core/alpha.ts", "src/core/beta.ts"]),
+    );
+
+    const listed = provider.findFileItem("src/core/alpha.ts");
+    assert.ok(listed instanceof ReviewFileItem);
+    assert.equal(listed.state.file.path, "src/core/alpha.ts");
+    // List mode has no nesting for reveal to expand.
+    assert.equal(provider.getParent(listed), undefined);
+
+    provider.setViewMode("tree");
+    const nested = provider.findFileItem("src/core/alpha.ts");
+    assert.ok(nested instanceof ReviewFileItem);
+    const parent = provider.getParent(nested);
+    assert.ok(parent instanceof ReviewDirectoryItem);
+    assert.equal(parent.path, "src/core");
+    // Directory rows sit at the root after compaction.
+    assert.equal(provider.getParent(parent), undefined);
+    assert.equal(provider.findFileItem("missing.ts"), undefined);
+  });
+
   test("reports progress from the review, not from the rows it happens to show", () => {
     const provider = new ReviewTreeProvider(sessionOver(["a.ts", "src/b.ts"], ["a.ts"]));
     provider.setViewMode("tree");

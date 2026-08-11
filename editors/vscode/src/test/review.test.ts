@@ -128,6 +128,20 @@ async function waitForVisibleEditor(
   throw new Error("timed out waiting for a matching visible editor");
 }
 
+/** Poll until the Hunk sidebar selection includes a path. */
+async function waitForSidebarSelection(path: string, timeoutMs = 5000): Promise<void> {
+  const api = await extensionApi();
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const selection = api.__getTreeViewForTests()?.selection ?? [];
+    if (selection.some((item) => item instanceof ReviewFileItem && item.state.file.path === path)) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(`timed out waiting for Hunk sidebar to select ${path}`);
+}
+
 /** Scripted pre-image so opening a review diff does not fail the content provider. */
 function alphaSourceResponse(args: string[]): { path: string; side: string; text: string } {
   const side = args[args.indexOf("--side") + 1] ?? "old";
@@ -688,6 +702,112 @@ suite("hunk review in VS Code", () => {
     assert.equal(plainLeft, false);
   });
 
+  // Regression: a non-line-1 anchor used to be lost because revealLine hit the same-URI
+  // plain Comments tab, then closePlainTabsFor discarded that selection and left the diff
+  // at line 1. The line number is the whole contract here — line 1 would still pass.
+  test("promoting a plain open reveals a non-first line on the review diff", async () => {
+    const api = await extensionApi();
+    // Use a dedicated file so we never fight the one-line alpha.ts fixture cache.
+    const midPath = "mid-line.ts";
+    const commentLine = 5; // 1-based; zero-based selection is 4
+    const multiLine = "line1\nline2\nline3\nline4\nline5 comment here\nline6\n";
+    const midUri = vscode.Uri.joinPath(vscode.workspace.workspaceFolders![0]!.uri, midPath);
+
+    const { runner } = scriptRunner([
+      buildExport({
+        review: {
+          title: "working tree",
+          files: [
+            {
+              id: "mid",
+              path: midPath,
+              additions: 6,
+              deletions: 0,
+              hunkCount: 1,
+              hunks: [{ index: 0, header: "@@ -0,0 +1,6 @@", newStart: 1, newLines: 6 }],
+            },
+          ],
+          reviewNotes: [],
+        },
+        comments: {
+          [midPath]: [
+            {
+              id: "c-mid",
+              body: "not the first line",
+              createdAt: "2026-08-01T00:00:00.000Z",
+              updatedAt: "2026-08-01T00:00:00.000Z",
+              side: "new",
+              line: commentLine,
+              originalLine: commentLine,
+              status: "active",
+              outdated: false,
+            },
+          ],
+        },
+      }),
+      (args) => ({
+        path: midPath,
+        side: args[args.indexOf("--side") + 1] ?? "old",
+        text: multiLine,
+      }),
+    ]);
+    api.__setHunkRunnerForTests(runner);
+
+    await vscode.commands.executeCommand("workbench.action.closeAllEditors");
+    await vscode.workspace.fs.writeFile(midUri, Buffer.from(multiLine));
+    try {
+      await vscode.commands.executeCommand("hunkReview.openReview");
+      const thread = api.__getActiveReviewForTests()?.comments.threads.at(-1);
+      assert.ok(thread, "expected a rendered comment thread");
+      assert.equal(thread.range?.start.line, commentLine - 1);
+
+      const document = await vscode.workspace.openTextDocument(midUri);
+      assert.ok(
+        document.lineCount >= commentLine,
+        `expected at least ${commentLine} lines after write, got ${document.lineCount}`,
+      );
+      await vscode.window.showTextDocument(document, {
+        selection: new vscode.Range(commentLine - 1, 0, commentLine - 1, 0),
+        preview: false,
+      });
+
+      await waitForActiveTextDiff();
+      const revealed = await waitForVisibleEditor(
+        (editor) =>
+          editor.document.uri.scheme === "file" &&
+          editor.document.uri.fsPath.endsWith(midPath) &&
+          editor.selection.active.line === commentLine - 1,
+      );
+      assert.equal(
+        revealed.selection.active.line,
+        commentLine - 1,
+        "promote must land on the comment line in the review diff, not line 1",
+      );
+
+      // Sidebar follows the promoted file even though the open never went through a tree click.
+      await waitForSidebarSelection(midPath);
+    } finally {
+      await vscode.commands.executeCommand("workbench.action.closeAllEditors");
+      try {
+        await vscode.workspace.fs.delete(midUri, { useTrash: false });
+      } catch {
+        // Best-effort cleanup of the dedicated fixture file.
+      }
+    }
+  });
+
+  test("opening a file from the command selects it in the Hunk sidebar", async () => {
+    const api = await extensionApi();
+    const { runner } = scriptRunner([buildExport(), alphaSourceResponse]);
+    api.__setHunkRunnerForTests(runner);
+
+    await vscode.commands.executeCommand("workbench.action.closeAllEditors");
+    await vscode.commands.executeCommand("hunkReview.openReview");
+    await vscode.commands.executeCommand("hunkReview.openFile", "alpha.ts");
+    await waitForActiveTextDiff();
+    await waitForSidebarSelection("alpha.ts");
+  });
+
   test("opening an old-side reviewed document plain promotes into the review diff", async () => {
     const api = await extensionApi();
     const { runner } = scriptRunner([
@@ -792,11 +912,10 @@ suite("hunk review in VS Code", () => {
       preview: false,
       preserveFocus: false,
     });
-    await new Promise((resolve) => setTimeout(resolve, 300));
 
-    assert.ok(
-      vscode.window.tabGroups.activeTabGroup.activeTab?.input instanceof vscode.TabInputTextDiff,
-    );
+    // Promote runs on the active-editor event; wait until the surface is a compare again
+    // (plain re-activation is re-routed back into the existing pair).
+    await waitForActiveTextDiff();
     assert.equal(
       vscode.window.tabGroups.all
         .flatMap((group) => group.tabs)

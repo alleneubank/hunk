@@ -72,6 +72,8 @@ let runnerOverride: HunkRunner | undefined;
 export interface HunkReviewExtensionApi {
   __setHunkRunnerForTests(runner: HunkRunner | undefined): void;
   __getActiveReviewForTests(): ActiveReview | null;
+  /** Test seam: sidebar selection after open/promote. */
+  __getTreeViewForTests(): vscode.TreeView<unknown> | null;
 }
 
 /** Report one failure the way the user can act on it. */
@@ -385,6 +387,27 @@ function conversationTargetOf(thread: vscode.CommentThread): ConversationTarget 
 /** How long to wait for a compare pane to show up after `vscode.diff` resolves. */
 const REVEAL_WAIT_MS = 2000;
 
+/** Whether two URIs name the same document for editor/tab matching. */
+function sameDocumentUri(a: vscode.Uri, b: vscode.Uri): boolean {
+  if (a.toString() === b.toString()) {
+    return true;
+  }
+  // Workspace files can differ by encoding or casing in rare path forms; fsPath is the
+  // durable identity for file-scheme documents.
+  return a.scheme === "file" && b.scheme === "file" && a.fsPath === b.fsPath;
+}
+
+/**
+ * Whether the active tab is a side-by-side diff whose original or modified side is `uri`.
+ */
+function activeTextDiffShows(uri: vscode.Uri): boolean {
+  const tab = vscode.window.tabGroups.activeTabGroup.activeTab;
+  if (!(tab?.input instanceof vscode.TabInputTextDiff)) {
+    return false;
+  }
+  return sameDocumentUri(tab.input.original, uri) || sameDocumentUri(tab.input.modified, uri);
+}
+
 /**
  * Put the cursor on one line of an already-open reviewed file.
  *
@@ -392,8 +415,9 @@ const REVEAL_WAIT_MS = 2000;
  * pre-image, beside the code it was talking about, rather than at the same number in an
  * unrelated new-side document (REQ-VSCODE-008).
  *
- * Polls briefly: `vscode.diff` can resolve before both panes are in `visibleTextEditors`,
- * and a silent miss would leave REQ-VSCODE-022's "reveal the line" half unfinished.
+ * Polls briefly: `vscode.diff` can resolve before both panes are in `visibleTextEditors`.
+ * Callers must close same-URI plain tabs first so this lookup cannot hit the Comments-panel
+ * orphan and then lose the selection when that tab closes (leaving the diff at line 1).
  */
 async function revealLine(path: string, side: DiffSide, line: number | undefined): Promise<void> {
   if (line === undefined) {
@@ -403,16 +427,25 @@ async function revealLine(path: string, side: DiffSide, line: number | undefined
   const uri = anchorUri(path, side);
   const deadline = Date.now() + REVEAL_WAIT_MS;
   let editor: vscode.TextEditor | undefined;
+
   while (Date.now() < deadline) {
-    editor = vscode.window.visibleTextEditors.find(
-      (candidate) => candidate.document.uri.toString() === uri.toString(),
-    );
-    if (editor) {
-      break;
+    // Prefer a pane of the active compare for this URI once the pair is up.
+    if (activeTextDiffShows(uri)) {
+      editor = vscode.window.visibleTextEditors.find((candidate) =>
+        sameDocumentUri(candidate.document.uri, uri),
+      );
+      if (editor) {
+        break;
+      }
     }
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
 
+  editor =
+    editor ??
+    vscode.window.visibleTextEditors.find((candidate) =>
+      sameDocumentUri(candidate.document.uri, uri),
+    );
   if (!editor) {
     return;
   }
@@ -431,6 +464,36 @@ async function revealLine(path: string, side: DiffSide, line: number | undefined
   if (side === "old") {
     await vscode.commands.executeCommand("workbench.action.compareEditor.focusPrimarySide");
   }
+}
+
+/**
+ * The 1-based line a plain open should promote to.
+ *
+ * `onDidChangeActiveTextEditor` can fire before Comments / `showTextDocument` finishes
+ * placing the selection, so a raw read often sees line 1. Prefer a thread on this URI when
+ * the selection has not landed on one yet and only one thread exists (the usual Comments
+ * click). Multi-thread files fall back to the settled selection after a short wait.
+ */
+async function resolvePromoteLine(editor: vscode.TextEditor): Promise<number> {
+  const uri = editor.document.uri;
+  const threads =
+    active?.comments.threads.filter((thread) => sameDocumentUri(thread.uri, uri)) ?? [];
+  const selectionLine = editor.selection.active.line + 1;
+
+  if (
+    threads.length === 0 ||
+    threads.some((thread) => (thread.range?.start.line ?? -1) + 1 === selectionLine)
+  ) {
+    return selectionLine;
+  }
+
+  if (threads.length === 1 && threads[0]?.range) {
+    return threads[0].range.start.line + 1;
+  }
+
+  // Several threads: give the selection a beat to land on the one that was clicked.
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  return editor.selection.active.line + 1;
 }
 
 /**
@@ -453,13 +516,41 @@ function activeTabIsTextDiff(): boolean {
  * group is not collateral damage of Comments-panel promotion.
  */
 async function closePlainTabsFor(uri: vscode.Uri): Promise<void> {
-  const target = uri.toString();
   const toClose = vscode.window.tabGroups.activeTabGroup.tabs.filter(
-    (tab) => tab.input instanceof vscode.TabInputText && tab.input.uri.toString() === target,
+    (tab) => tab.input instanceof vscode.TabInputText && sameDocumentUri(tab.input.uri, uri),
   );
 
   if (toClose.length > 0) {
     await vscode.window.tabGroups.close(toClose);
+  }
+}
+
+/**
+ * Select the reviewed file in the Hunk sidebar without stealing focus.
+ *
+ * Comments panel and agent focus open the editor without a tree click, so the sidebar would
+ * otherwise stay on whatever was last selected. A filter that hides the file is a silent
+ * no-op: there is no row to select. `TreeView.reveal` requires a visible view — ensure the
+ * Files view is showing before selecting, then restore focus to the editor.
+ */
+async function revealInSidebar(path: string): Promise<void> {
+  if (!tree || !treeView) {
+    return;
+  }
+
+  const item = tree.findFileItem(path);
+  if (!item) {
+    return;
+  }
+
+  try {
+    // Reveal needs the view visible; open it without permanently stealing the editor focus.
+    await vscode.commands.executeCommand("hunkReview.files.focus");
+    await treeView.reveal(item, { select: true, focus: false, expand: true });
+    // Return to the review diff so the sidebar selection is not paid for with a lost cursor.
+    await vscode.commands.executeCommand("workbench.action.focusActiveEditorGroup");
+  } catch {
+    // TreeView.reveal can reject if the view is disposed mid-refresh; never block the open.
   }
 }
 
@@ -487,17 +578,48 @@ async function openReviewDiff(path: string): Promise<void> {
 }
 
 /**
+ * Whether any open tab is already the review side-by-side for this path.
+ *
+ * Used so a plain re-activation of a document that is already the modified (or original)
+ * side of a Hunk pair does not stack a second `vscode.diff` or tear the pair down.
+ */
+function reviewDiffAlreadyOpen(path: string): boolean {
+  if (!active) {
+    return false;
+  }
+  const file = active.session.files.find((entry) => entry.file.path === path)?.file;
+  if (!file) {
+    return false;
+  }
+  const oldUri = documentUri(active, file, "old");
+  const newUri = documentUri(active, file, "new");
+
+  return vscode.window.tabGroups.all.some((group) =>
+    group.tabs.some((tab) => {
+      if (!(tab.input instanceof vscode.TabInputTextDiff)) {
+        return false;
+      }
+      return (
+        sameDocumentUri(tab.input.original, oldUri) && sameDocumentUri(tab.input.modified, newUri)
+      );
+    }),
+  );
+}
+
+/**
  * Re-route a plain open of a reviewed document into the review diff (REQ-VSCODE-022).
  *
  * Covers the Comments panel (and any other "open this URI" path): threads are anchored to one
  * side's document, so native reveal lands on a lone file. Opening the same path via the
  * sidebar already goes through `openReviewDiff`; this is the missing half.
  *
- * `closePlainTabsFor` runs only after a successful open — a failed `vscode.diff` must leave
- * the comment anchor open rather than leave the reviewer with neither surface.
+ * Plain tabs are closed before the line reveal so the selection cannot land on the orphan
+ * Comments-panel tab (same URI as the new side) and then vanish when that tab closes. When
+ * the pair is already open, only the sidebar follows — re-asserting the line would race
+ * with a just-finished promote and overwrite its anchored line with the compare default.
  */
 async function promoteReviewedEditorToDiff(editor: vscode.TextEditor): Promise<void> {
-  if (!active || activeTabIsTextDiff()) {
+  if (!active) {
     return;
   }
 
@@ -506,13 +628,35 @@ async function promoteReviewedEditorToDiff(editor: vscode.TextEditor): Promise<v
     return;
   }
 
-  // Capture before open replaces the editor; the Comments panel has already placed the
-  // cursor on the anchored line.
-  const line = editor.selection.active.line + 1;
+  // Capture before open replaces the editor. Selection may still be at line 1 while Comments
+  // finishes placing it — resolvePromoteLine prefers the sole thread on this URI in that case.
+  const line = await resolvePromoteLine(editor);
   const sourceUri = editor.document.uri;
 
+  if (activeTabIsTextDiff()) {
+    // Active surface is already a compare pair (this file or another). Only sync the sidebar;
+    // re-revealing the line would race a just-finished promote and stomp its anchor with 1.
+    await revealInSidebar(located.path);
+    return;
+  }
+
+  if (reviewDiffAlreadyOpen(located.path)) {
+    // A plain tab opened for a path that already has a Hunk pair (Comments or showTextDocument
+    // beside the compare). Close the orphan and re-focus the existing pair — do not stack.
+    await closePlainTabsFor(sourceUri);
+    await openReviewDiff(located.path);
+    await revealLine(located.path, located.side, line);
+    await revealInSidebar(located.path);
+    return;
+  }
+
   await openReviewDiff(located.path);
+  // Close first so revealLine focuses the compare pane, not the orphan plain tab.
+  await closePlainTabsFor(sourceUri);
   await revealLine(located.path, located.side, line);
+  await revealInSidebar(located.path);
+  // vscode.diff sometimes leaves the plain tab when the modified URI matches it; close again
+  // after focus settles so the review pair is the only surface for this path.
   await closePlainTabsFor(sourceUri);
 }
 
@@ -617,6 +761,15 @@ export function activate(context: vscode.ExtensionContext): HunkReviewExtensionA
     // selection must leave the reviewer on the last known-good changeset, not on an empty
     // sidebar with every comment controller already disposed.
     const exported = await cli.export(false);
+
+    // Dispose the previous controller *before* creating the next one. Both use the id
+    // "hunkReview"; two live controllers with that id leave the new one unable to publish
+    // threads — sidebar comment counts still update (session data) while the Comments panel
+    // stays empty and dispose logs "unknown thread".
+    const previous = active;
+    active = null;
+    previous?.comments.dispose();
+
     const controller = vscode.comments.createCommentController("hunkReview", "Hunk Review");
     controller.commentingRangeProvider = {
       provideCommentingRanges: (document) => [
@@ -624,15 +777,13 @@ export function activate(context: vscode.ExtensionContext): HunkReviewExtensionA
       ],
     };
 
-    const next: ActiveReview = {
+    active = {
       cli,
       workspaceRoot,
       target,
       session: new ReviewSession(cli, exported),
       comments: new ReviewCommentSurface(controller, anchorUri),
     };
-    active?.comments.dispose();
-    active = next;
     watchFocusRoot(active.session.reviewRoot(workspaceRoot));
     tree?.setSession(active.session);
     decorations?.setSession(active.session);
@@ -903,6 +1054,7 @@ export function activate(context: vscode.ExtensionContext): HunkReviewExtensionA
     vscode.commands.registerCommand("hunkReview.openFile", (path: string) =>
       guard(async () => {
         await openReviewDiff(path);
+        await revealInSidebar(path);
       }),
     ),
   );
@@ -1078,6 +1230,7 @@ export function activate(context: vscode.ExtensionContext): HunkReviewExtensionA
       runnerOverride = runner;
     },
     __getActiveReviewForTests: () => active,
+    __getTreeViewForTests: () => treeView,
   };
 }
 
