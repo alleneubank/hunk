@@ -213,6 +213,8 @@ function createLineScrollBootstrap(pager = false): AppBootstrap {
   return createTestVcsAppBootstrap({
     changesetId: "changeset:app-line-scroll",
     files: [createTestDiffFile("scroll", "scroll.ts", before, after, true)],
+    // Pure viewport scroll: default cursor-line "row" remaps arrows to the marker.
+    initialCursorLine: "off",
     pager,
   });
 }
@@ -441,6 +443,8 @@ function createCollapsedTopBootstrap(): AppBootstrap {
         lines("export const other = 2;"),
       ),
     ],
+    // One-step stream advance under the pinned header — not current-line movement.
+    initialCursorLine: "off",
   });
 }
 
@@ -1573,8 +1577,9 @@ describe("App interactions", () => {
       expect(frame).toContain("Why prefs.ts changed");
       expect(frame).not.toContain("@@ -1,1 +1,2 @@");
       expect(frame).not.toContain("1 - export const message");
-      expect(frame.indexOf("Agent note - prefs.ts R2")).toBeLessThan(
-        frame.indexOf("export const added = true;"),
+      // Notes render after the annotated new-side line (R2 = the added line under wrap).
+      expect(frame.indexOf("export const added = true;")).toBeLessThan(
+        frame.indexOf("Agent note - prefs.ts R2"),
       );
     } finally {
       await act(async () => {
