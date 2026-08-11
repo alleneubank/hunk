@@ -6,10 +6,12 @@ import {
   createJjStagedError,
   resolveJjRepoRoot,
   runJjText,
+  type JjBackedInput,
 } from "../../../../core/vcs/jujutsu";
 import {
   HUNK_CORE_VCS_DETECTION_PRIORITY,
   type ExtensionVcsAdapter,
+  type ExtensionVcsFileSourceReader,
   type HunkExtensionAPI,
 } from "../../../../extension-api/types";
 
@@ -42,6 +44,32 @@ function detectJjRepo(cwd: string) {
   }
 }
 
+/** Read the exact parent/current pair that `jj diff -r` compares. */
+function createJjSourceReader(input: JjBackedInput, cwd: string): ExtensionVcsFileSourceReader {
+  const newRevision = input.kind === "show" ? (input.ref ?? "@") : (input.range ?? "@");
+  const oldRevision = `${newRevision}-`;
+
+  return async ({ path, previousPath, changeType, side }) => {
+    if ((changeType === "new" && side === "old") || (changeType === "deleted" && side === "new")) {
+      return null;
+    }
+
+    const sourcePath = side === "old" ? (previousPath ?? path) : path;
+    return runJjText({
+      input,
+      args: [
+        "file",
+        "show",
+        "--revision",
+        side === "old" ? oldRevision : newRevision,
+        "--",
+        sourcePath,
+      ],
+      cwd,
+    });
+  };
+}
+
 /** VCS adapter translating neutral review operations to Jujutsu commands. */
 export const JjVcsAdapter = {
   id: "jj",
@@ -63,6 +91,11 @@ export const JjVcsAdapter = {
           sourceLabel: repoRoot,
           title: input.range ? `${repoName} ${input.range}` : `${repoName} working copy`,
           patchText: runJjText({ input, args: buildJjDiffArgs(input), cwd }),
+          sourceCapabilities: {
+            old: "hunk" as const,
+            new: input.range ? ("hunk" as const) : ("workspace" as const),
+          },
+          readFileSource: createJjSourceReader(input, cwd),
         };
       },
       watchSignature(input, { cwd }) {
@@ -79,6 +112,8 @@ export const JjVcsAdapter = {
           sourceLabel: repoRoot,
           title: `${repoName} show ${revset}`,
           patchText: runJjText({ input, args: buildJjShowArgs(input), cwd }),
+          sourceCapabilities: { old: "hunk" as const, new: "hunk" as const },
+          readFileSource: createJjSourceReader(input, cwd),
         };
       },
       watchSignature(input, { cwd }) {

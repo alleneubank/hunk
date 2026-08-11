@@ -1,7 +1,6 @@
 {
   "name": "hunkdiff",
-  "version": "0.18.0",
-  "description": "Desktop-inspired terminal diff viewer for understanding agent-authored changesets.",
+  "version": "0.18.0",  "description": "Desktop-inspired terminal diff viewer for understanding agent-authored changesets.",
   "keywords": [
     "ai",
     "code-review",
@@ -25,7 +24,8 @@
   },
   "workspaces": [
     ".",
-    "packages/*"
+    "packages/*",
+    "editors/*"
   ],
   "files": [
     "bin",
@@ -68,6 +68,8 @@
     "website:links": "bun run ./scripts/check-website-links.ts",
     "website:test:browser": "bun run --cwd website test:browser",
     "typecheck": "tsc --noEmit",
+    "typecheck:vscode": "bun run --filter hunk-vscode typecheck",
+    "test:vscode": "bun run --filter hunk-vscode test",
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",
     "lint": "oxlint . --deny-warnings",

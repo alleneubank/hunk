@@ -121,6 +121,7 @@ export function toInternalVcsPatchResult(result: ExtensionVcsPatchResult): VcsPa
     sourceLabel: result.sourceLabel,
     title: result.title,
     patchText: result.patchText,
+    sourceCapabilities: result.sourceCapabilities,
     untrackedPaths: result.untrackedPaths,
     sourceFetcherBuilder,
     extraFiles: result.extraFiles?.map((entry, index) =>
