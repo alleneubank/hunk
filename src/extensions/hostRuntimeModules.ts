@@ -1,4 +1,5 @@
 import { dirname } from "node:path";
+import { resolveCanonicalPath } from "../core/paths";
 
 /**
  * Host-owned modules served to dynamically imported extension files.
@@ -160,16 +161,22 @@ function registerVirtualModules() {
 
 /** Register the transpile-and-rewrite hook for one extension directory. */
 function registerSourceRoot(directory: string) {
-  if (registeredSourceRoots.has(directory)) {
+  const canonicalDirectory = resolveCanonicalPath(directory);
+  if (registeredSourceRoots.has(canonicalDirectory)) {
     return;
   }
 
-  registeredSourceRoots.add(directory);
+  registeredSourceRoots.add(canonicalDirectory);
   // Everything under the directory, so a folder extension's helper modules get
   // the same rewrite as its entry file. `[/\\]` keeps the boundary correct on
   // Windows, where `args.path` carries native separators.
-  const escapedDirectory = directory.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const filter = new RegExp(`^${escapedDirectory}[/\\\\].*\\.(?:[mc]?[jt]s|[jt]sx)$`);
+  // Bun reports `args.path` with the spelling used by the import in some runs
+  // and with the filesystem's canonical spelling in others (notably `/var`
+  // versus `/private/var` on macOS). Match both aliases while deduplicating
+  // registration by their canonical identity.
+  const sourceRoots = [...new Set([directory, canonicalDirectory])];
+  const escapedRoots = sourceRoots.map((root) => root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  const filter = new RegExp(`^(?:${escapedRoots.join("|")})[/\\\\].*\\.(?:[mc]?[jt]s|[jt]sx)$`);
 
   Bun.plugin({
     name: `hunk-host-extension-source:${directory}`,
