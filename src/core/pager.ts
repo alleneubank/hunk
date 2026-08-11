@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
 import { parse as parseShellCommand, type ParseEntry } from "shell-quote";
 import { stripTerminalControl } from "./patch/normalize";
+import { flushWrite } from "../lib/stdio";
 import { sanitizeTerminalText } from "../lib/terminalText";
 
 /** Detect whether generic pager stdin looks like a diff/patch that Hunk should review. */
@@ -151,7 +152,9 @@ export async function pagePlainText(
   },
 ) {
   if (!deps.stdout.isTTY) {
-    deps.stdout.write(sanitizeTerminalText(text));
+    // Awaited because the caller exits as soon as this resolves, and a pipe holds only one
+    // buffer: an unawaited write would lose everything past it.
+    await flushWrite(deps.stdout, sanitizeTerminalText(text));
     return;
   }
 

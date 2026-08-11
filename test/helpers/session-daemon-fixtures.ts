@@ -20,6 +20,7 @@ export function createTestSessionFileSummary(
     additions: 1,
     deletions: 1,
     hunkCount: 1,
+    changeType: "change",
     ...overrides,
   };
 }

@@ -380,6 +380,7 @@ describe("session command compatibility checks", () => {
                 additions: 1,
                 deletions: 0,
                 hunkCount: 1,
+                changeType: "change" as const,
                 hunks: [
                   {
                     index: 0,
@@ -404,6 +405,7 @@ describe("session command compatibility checks", () => {
                   additions: 1,
                   deletions: 0,
                   hunkCount: 1,
+                  changeType: "change" as const,
                   hunks: [
                     {
                       index: 0,
@@ -442,6 +444,7 @@ describe("session command compatibility checks", () => {
           additions: 1,
           deletions: 0,
           hunkCount: 1,
+          changeType: "change" as const,
           hunks: [
             {
               index: 0,
@@ -466,6 +469,7 @@ describe("session command compatibility checks", () => {
             additions: 1,
             deletions: 0,
             hunkCount: 1,
+            changeType: "change" as const,
             hunks: [
               {
                 index: 0,
@@ -501,6 +505,7 @@ describe("session command compatibility checks", () => {
                 additions: 1,
                 deletions: 0,
                 hunkCount: 1,
+                changeType: "change" as const,
                 patch: "@@ -1,1 +1,2 @@",
                 hunks: [
                   {
@@ -526,6 +531,7 @@ describe("session command compatibility checks", () => {
                   additions: 1,
                   deletions: 0,
                   hunkCount: 1,
+                  changeType: "change" as const,
                   patch: "@@ -1,1 +1,2 @@",
                   hunks: [
                     {
@@ -565,6 +571,7 @@ describe("session command compatibility checks", () => {
           additions: 1,
           deletions: 0,
           hunkCount: 1,
+          changeType: "change" as const,
           patch: "@@ -1,1 +1,2 @@",
           hunks: [
             {
@@ -590,6 +597,7 @@ describe("session command compatibility checks", () => {
             additions: 1,
             deletions: 0,
             hunkCount: 1,
+            changeType: "change" as const,
             patch: "@@ -1,1 +1,2 @@",
             hunks: [
               {
@@ -620,6 +628,7 @@ describe("session command compatibility checks", () => {
               reviewNotes: [
                 {
                   noteId: "user:1",
+                  noteKey: "user:1",
                   source: "user",
                   filePath: "README.md",
                   body: "Please simplify this.",
@@ -662,6 +671,7 @@ describe("session command compatibility checks", () => {
             return [
               {
                 noteId: "user:1",
+                noteKey: "user:1",
                 source: "user",
                 filePath: "README.md",
                 hunkIndex: 0,
