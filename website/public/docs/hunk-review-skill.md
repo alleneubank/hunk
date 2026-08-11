@@ -169,7 +169,11 @@ hunk session reload --repo . -- diff --exclude-untracked
 
 ## Agent context sidecars
 
-At the end of a meaningful changeset, write or refresh `.hunk/agent-context.json` in the repo root so Hunk can auto-load it with zero flags. Use range-based annotations with `oldRange` / `newRange`; the file order in the sidecar drives sidebar and review order.
+At the end of a meaningful changeset, write notes to the **target-keyed** conventional path so bare `hunk diff` / range / show auto-load them with zero flags.
+
+Read `agentContextPath` from `hunk review export --json` for the current invocation (absolute path to `.hunk/agent-context.<targetId>.json`). That is the single machine-readable path surface — do not hard-code a bare `.hunk/agent-context.json` for auto-discovery.
+
+Use range-based annotations with `oldRange` / `newRange`; the file order in the sidecar drives sidebar and review order. Explicit `--agent-context <path>` still loads any path, including a legacy bare name.
 
 ## Guiding a review
 

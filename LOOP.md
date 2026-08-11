@@ -13,23 +13,57 @@ ladder; the verifier — not confidence — decides when work is done.
 
 ## State (updated 2026-08-11 — rewrite each iteration; newest facts first)
 
-- Branch `feat/local-review-vscode`, HEAD `87ca74e2` (pre-loop tip: 8-commit
-  upstream stack on `upstream/main`). Tree clean except campaign artifacts
-  under `.hunk/` (ignored) until LOOP.md is committed.
-- Design ratified in conversation (see Decisions): target-keyed filename,
-  no bare-file auto-load. Full draft:
-  `.hunk/AGENT-CONTEXT-DISCOVERY-DESIGN.md` (local; not required for git
-  resume once SPEC carries the contract).
-- Stack commit 1 today still implements **unscoped**
-  `.hunk/agent-context.json` discovery — that is the work to replace, not
-  leave as-is for upstream.
-- #540 is OPEN with @benvinegar's design note (filename id ↔ changeset);
-  no line review; greptile author-list noise only.
-- Prior rewrite backups: `backup/pre-upstream-rebase-20260811`,
-  `backup/merged-upstream-local-review`.
-- Read first: this file → Decisions → SPEC.md review/export rows if any →
-  `src/core/config.ts` (resolution seam ~1107–1135) → `src/core/paths.ts`
-  → `src/core/agent.ts` → config/loader tests.
+- Branch `feat/local-review-vscode`, HEAD before this State rewrite was
+  `4db3b534` (charter) over stack with bottom commit
+  `749ec724 feat: auto-discover target-keyed agent-context sidecars`.
+  Tree dirty only with residual floor fixes in flight (CLI keyed fixtures,
+  viewed keybinding docs/public ids, regenerated website docs).
+- **Product unit is implemented** against the design in
+  `.hunk/AGENT-CONTEXT-DISCOVERY-DESIGN.md` and SPEC REQ-AGENT-001…007:
+  - `agentContextTargetId` / `conventionalAgentContextPath` in
+    `src/core/paths.ts`
+  - config seam injects keyed path only (`src/core/config.ts` ~1126)
+  - `agentContextPath` on `hunk review export --json`
+  - skill/README/docs/agent-workflows teach the convention
+  - history is feat-shaped: keyed discovery is commit 1 of the stack
+- **Floors cited this session:**
+  - `bun run typecheck` — clean
+  - `bun run lint` — 0 warnings
+  - focused: `bun test src/core/agentContextPath.test.ts
+src/core/config.test.ts src/core/agent.test.ts
+src/core/loaders.test.ts src/core/reviewExport.test.ts` — 170 pass
+  - `bun test src/core/` — 672 pass
+  - `bun run check:docs` — was stale (config.md + skill); regenerated
+    green after `bun run generate:docs`
+  - `bun run test` — **not yet green**: residual failures (see Residual)
+- **Residual walls blocking interior-green (`bun run test`):**
+  1. ~~`test/cli/review.test.ts` bare `agent-context.json` fixtures~~ —
+     **fixed this iteration** (write keyed path via
+     `conventionalAgentContextPath`).
+  2. ~~`docs/keybindings.md` missing viewed commands +
+     `PUBLIC_EXTENSION_COMMAND_IDS`~~ — **fixed this iteration**
+     (stack debt from viewed feat; blocked whole-branch floors).
+  3. **Still open — App interaction scroll/layout (4 fails)** in
+     `src/ui/AppHost.interactions.test.tsx`:
+     - `bootstrap preferences initialize the visible view state` —
+       agent-note index after added line (`indexOf` note 1059 >
+       code 918); note-before-code invariant broken or chrome shifted
+       string layout.
+     - `arrow keys scroll the review pane line by line` — after down,
+       up cannot re-show `line01` (stuck at `line02`); likely top clamp
+       / pinned header off-by-one under viewed chrome.
+     - `the first down-arrow step still advances content under the
+always-pinned file header above a collapsed gap` — one down
+       does not reveal `line366` past the collapsed gap.
+     - `pager mode arrow keys also scroll line by line` — downs do not
+       reach `line08` at height 8 (viewport too tight or scroll dead).
+       Evidence: frames show `viewed 0/1` status chrome; failures are
+       **not** in keyed-discovery source, but block BRIEF whole-branch
+       `bun run test`. Treat as Unit F; do not park as pre-existing
+       without a red on detached `upstream/main` in this working copy.
+- #540 still OPEN; reply/close is **Boundary** (human).
+- Read first: this file → Decisions → SPEC Agent-context section →
+  Residual Unit F tests → only then discovery code if floors regress.
 
 ## Decisions (append-only; do not re-litigate)
 
@@ -54,65 +88,55 @@ ladder; the verifier — not confidence — decides when work is done.
 5. 2026-08-11 — Campaign lands on `feat/local-review-vscode` by rewriting
    or amending the bottom auto-discover unit so the stack's first commit
    matches the keyed design (history stays feat-shaped; no new top-of-stack
-   "fix" for discovery). **provisional (driver)**
+   "fix" for discovery). **provisional (driver)** — **done** as
+   `749ec724`.
+6. 2026-08-11 — **Agent path surface:** single machine-readable field
+   `agentContextPath` on `hunk review export --json` (absolute conventional
+   path or null). Skill documents that; no separate `hunk agent-context path`
+   command in v1. **provisional (driver)**
+7. 2026-08-11 — Stack floor failures in App interactions / missing viewed
+   keybinding docs are **in campaign residual** when they fail
+   `bun run test`, even if not caused by keyed discovery — BRIEF whole-branch
+   green is the campaign terminal. **provisional (driver)**
 
 ## Work plan (ADF per unit)
 
-### Unit A — SPEC: keyed discovery contract
+### Unit A — SPEC: keyed discovery contract — **DONE**
 
-- **Establishes:** REQ rows (or amendments to existing agent-context docs)
-  for target id, path convention, resolution order, watch, agent ergonomics
-  (how to obtain the path without memorizing hashes), migration (bare file
-  not auto-loaded). Point at #540 acceptance.
-- **Defers:** implementation, skill/README polish beyond contract, PR text.
-- **Done when:** SPEC (and BRIEF if floors change) state the law in
-  present tense; no open design forks for v1.
+- REQ-AGENT-001…007 in `SPEC.md` (Agent-context auto-discovery section).
 
-### Unit B — PLAN + TDD: pure target id + discovery seam
+### Unit B — PLAN + TDD: pure target id + discovery seam — **DONE**
 
-- **Establishes:** `agentContextTargetId` / `conventionalAgentContextPath`
-  (or equivalent names) as pure functions; failing tests for: same inputs →
-  same id; range ≠ working-tree id; wrong-id file not loaded; matching id
-  loaded optional; explicit bare path still strict; `--no-agent-context`
-  wins; config path wins over conventional.
-- **Defers:** full docs site, vscode (untouched by discovery).
-- **Done when:** tests observed red on pre-change tree (or red on a
-  temporary wrong implementation), then green after DEV; cite outputs.
+- `src/core/agentContextPath.test.ts` + config/loaders coverage.
 
-### Unit C — DEV: wire config + watch + loaders
+### Unit C — DEV: wire config + watch + loaders — **DONE**
 
-- **Establishes:** `resolveConfiguredCliInput` (or successor) injects only
-  the keyed path; watch tracks that path; loaders unchanged except they
-  receive the resolved path. No dual-read of bare+keyed.
-- **Defers:** agent skill prose polish if skill regen is mechanical.
-- **Done when:** unit B floors green; typecheck green.
+- Keyed path only; no dual-read of bare+keyed.
 
-### Unit D — Docs / skill / CLI surface for agents
+### Unit D — Docs / skill / CLI surface for agents — **DONE** (regenerate docs if stale)
 
-- **Establishes:** README + agent-workflows + hunk-review skill state the
-  convention; agents learn the path via documented formula and/or a single
-  cheap surface (prefer: field on `hunk review export --json` **or** one
-  line in skill — pick one, log Decision if both).
-- **Defers:** website marketing copy.
-- **Done when:** skill/docs consistent with SPEC; `bun run check:docs` if
-  it covers touched docs.
+- README, agent-workflows, skill, export field. Run `bun run generate:docs`
+  when skill/config help change.
 
-### Unit E — History + interior-green of discovery unit
+### Unit E — History + discovery tip — **DONE**
 
-- **Establishes:** stack history presents keyed discovery as the
-  auto-discover feat (rewrite commit 1 or squash equivalent); no unscoped
-  discovery left on the branch tip.
-- **Defers:** full-stack PR body, Graphite split of later commits, human
-  push/PR.
-- **Done when:** `git log upstream/main..HEAD` still feat-shaped; tip
-  implements keyed discovery; whole-branch floors below green for
-  **this unit's** surface (not a full re-audit of vscode unless regressed).
+- Bottom of stack is `749ec724` keyed discovery; unscoped bare auto-load
+  is gone from tip.
+
+### Unit F — Whole-branch floor green (residual) — **IN PROGRESS**
+
+- **Establishes:** `bun run test` green on this branch; App interaction
+  scroll/layout floors pass; any remaining keyed-fixture test debt gone.
+- **Done when:** BRIEF floors for this branch cited green:
+  `typecheck`, `lint`, `check:docs`, `test` (and `test:integration` only
+  if watch/loader PTY surface is touched again).
+- **Defers:** push, PR, #540 reply (Boundary).
 
 ### Explicitly out of campaign scope
 
 - Opening/merging the PR to modem-dev; force-push of shared refs without
-  human; implementing content-hash filenames; fixing unrelated stack
-  commits unless a floor proves a regression introduced by this campaign.
+  human; implementing content-hash filenames; dogfood fork release unless
+  human asks.
 
 ## Verification floors
 
@@ -120,20 +144,23 @@ Per-change (owning unit):
 
 - `bun run typecheck` — clean.
 - Focused: `bun test src/core/config.test.ts src/core/agent.test.ts
-src/core/loaders.test.ts` (extend as new files appear) — all pass.
-- If CLI surface changes: `bun test src/core/cli.test.ts` and/or
-  `test/cli/` contracts for help text / export fields.
+src/core/loaders.test.ts src/core/agentContextPath.test.ts
+src/core/reviewExport.test.ts` — all pass.
+- CLI export fixtures: `bun test ./test/cli/review.test.ts` — all pass.
+- App residual: `bun test src/ui/AppHost.interactions.test.tsx` — all pass
+  before claiming Unit F.
 - Docs touched: `bun run check:docs` when applicable.
 
 Whole-branch (before **done**):
 
 - `bun run typecheck`
 - `bun run lint`
+- `bun run check:docs`
 - `bun run test` (BRIEF: not bare `bun test` that sweeps pty/smoke without
-  intent — use package scripts / scoped paths consistent with BRIEF Floors)
+  intent)
 - `bun run test:integration` if watch/loader PTY notes coverage is hit
 - Do **not** require `test:vscode` for this campaign unless extension files
-  change (they should not).
+  change for discovery (they should not).
 
 Review gate — harness first, briefed reviews: the driver and cooks own
 verification; do not outsource to a reviewer what a floor can decide.
@@ -182,17 +209,21 @@ same files.
   Until cited, do not park new breakage there.
 - PR #540 greptile "author not in allowed list" — process noise, not a
   product defect.
+- **Do not list** the four AppHost.interactions failures above as
+  pre-existing until proven on `upstream/main` — they currently fail on
+  this feature branch and are Unit F work.
 
 ## Terminal states & budget
 
 - **done:** interior-green checklist:
-  1. SPEC (and BRIEF if needed) describe keyed discovery; bare auto-load banned.
-  2. Pure target-id + path helpers exist; tests prove Ben's acceptance cases.
-  3. Config/watch/load path injects only the keyed conventional file.
-  4. Docs/skill (and optional export/CLI path hint) teach agents the path.
+  1. SPEC (and BRIEF if needed) describe keyed discovery; bare auto-load banned. ✅
+  2. Pure target-id + path helpers exist; tests prove Ben's acceptance cases. ✅
+  3. Config/watch/load path injects only the keyed conventional file. ✅
+  4. Docs/skill (and export path hint) teach agents the path. ✅
   5. Branch tip implements the design; history remains feat-shaped for this
-     unit; floors above green with cited output in State.
-  6. Handoff written for human: push branch, PR vs `modem-dev/hunk`, reply
+     unit. ✅
+  6. Whole-branch floors green with cited output in State (Unit F). ⬜
+  7. Handoff written for human: push branch, PR vs `modem-dev/hunk`, reply
      on #540 with the convention, supersede/close #540 as appropriate.
      Then stop the loop; dissolution of LOOP.md rides ship (dissolve-docs after
      boundary clears).
@@ -201,3 +232,5 @@ same files.
 - **budget:** hard cap **8** iterations for the campaign — or, earlier,
   three consecutive iterations without measurable movement on any checklist
   item → stop honestly with what was tried and why it cannot converge.
+  Iterations so far (estimate): 2 (implement A–E + history; residual floors).
+  Remaining budget: **6**.

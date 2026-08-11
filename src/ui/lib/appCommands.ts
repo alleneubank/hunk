@@ -180,6 +180,9 @@ const PUBLIC_EXTENSION_COMMAND_IDS = new Set([
   "hunk.review.nextAnnotatedHunk",
   "hunk.review.previousAnnotatedFile",
   "hunk.review.nextAnnotatedFile",
+  "hunk.review.previousUnviewedFile",
+  "hunk.review.nextUnviewedFile",
+  "hunk.review.toggleViewed",
 ]);
 
 function builtinCommandSpecs(options: BuildAppCommandsOptions): BuiltinCommandSpec[] {

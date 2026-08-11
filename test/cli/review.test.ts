@@ -1,9 +1,32 @@
 import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { conventionalAgentContextPath } from "../../src/core/paths";
+import type { CliInput } from "../../src/core/types";
 
 const SOURCE_ENTRYPOINT = join(process.cwd(), "src/main.tsx");
+
+/** Working-tree review input used by fixture repos (no range/show/pathspecs). */
+const WORKING_TREE_INPUT: CliInput = { kind: "vcs", staged: false, options: {} };
+
+/**
+ * Write an agent-context sidecar at the conventional keyed path for this target.
+ * Bare `.hunk/agent-context.json` is never auto-loaded (REQ-AGENT-001).
+ */
+function writeKeyedAgentContext(
+  repoDir: string,
+  body: unknown,
+  input: CliInput = WORKING_TREE_INPUT,
+) {
+  const path = conventionalAgentContextPath(repoDir, input);
+  if (path === null) {
+    throw new Error("fixture input has no conventional agent-context path");
+  }
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, JSON.stringify(body));
+  return path;
+}
 
 function git(cwd: string, ...args: string[]) {
   const proc = Bun.spawnSync(["git", ...args], {
@@ -190,15 +213,11 @@ describe("hunk review export CLI contract", () => {
     const repoDir = createReviewRepo();
 
     try {
-      mkdirSync(join(repoDir, ".hunk"), { recursive: true });
-      writeFileSync(
-        join(repoDir, ".hunk", "agent-context.json"),
-        JSON.stringify({
-          version: 1,
-          summary: "Raises alpha and leaves beta alone.",
-          files: [{ path: "alpha.ts", summary: "Only the alpha constant moves." }],
-        }),
-      );
+      writeKeyedAgentContext(repoDir, {
+        version: 1,
+        summary: "Raises alpha and leaves beta alone.",
+        files: [{ path: "alpha.ts", summary: "Only the alpha constant moves." }],
+      });
 
       const payload = JSON.parse(runHunk(repoDir, ["review", "export", "--json"]).stdout);
 
@@ -937,25 +956,21 @@ describe("hunk review export CLI contract", () => {
   /** A repo whose review carries one agent note, which is what a note operation names. */
   function createAnnotatedReviewRepo() {
     const repoDir = createReviewRepo();
-    mkdirSync(join(repoDir, ".hunk"), { recursive: true });
-    writeFileSync(
-      join(repoDir, ".hunk", "agent-context.json"),
-      JSON.stringify({
-        version: 1,
-        files: [
-          {
-            path: "alpha.ts",
-            annotations: [
-              {
-                summary: "Raised the constant",
-                rationale: "Callers expect ten.",
-                newRange: [1, 1],
-              },
-            ],
-          },
-        ],
-      }),
-    );
+    writeKeyedAgentContext(repoDir, {
+      version: 1,
+      files: [
+        {
+          path: "alpha.ts",
+          annotations: [
+            {
+              summary: "Raised the constant",
+              rationale: "Callers expect ten.",
+              newRange: [1, 1],
+            },
+          ],
+        },
+      ],
+    });
     return repoDir;
   }
 
