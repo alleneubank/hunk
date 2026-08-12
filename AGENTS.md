@@ -160,6 +160,38 @@ CLI input
 - Prefer concise, user-visible entries over internal refactors unless the refactor changes user-visible behavior.
 - Keep each changeset summary to one concise user-facing sentence; put implementation detail in the PR or supporting docs.
 
+## fork dogfood releases (alleneubank/hunk)
+
+This section is fork-only guidance. Upstream agents can ignore it.
+
+Ship model: **local build + GitHub prerelease tarballs** (mise `github:` / Nix overlays). Not Actions. See
+https://gist.github.com/alleneubank/bf7d25542a49b136671db0e4bb65226d
+
+- **Remote layout:** `origin` = personal fork (`alleneubank/hunk`), `upstream` = `modem-dev/hunk`.
+- **Clean PR set:** `main` mirrors what you intend to upstream. Release plumbing lives on `fork` =
+  `main` + one `[fork]` commit (`scripts/release-fork.ts`, this AGENTS section). Never let
+  distribution-only edits leak into a commit bound for an upstream PR.
+- **Version:** `<base>-fork.<YYYYMMDD>.g<sha9>` (UTC date; `g` + 9-char sha). Tag `v…`. Always
+  **prerelease** so `/releases/latest` never hijacks upstream trackers.
+- **Tarballs (required matrix):** host platform **plus** `hunkdiff-linux-x64` (Docker
+  `linux/amd64` when cutting from a Mac). Host-only is a defective fleet cut. Each archive is
+  `hunkdiff-<os>-<arch>.tar.gz` with `hunk`, `skills/`, `metadata.json` at the root, plus
+  `checksums.txt` (`shasum -a 256`). Platform identity is asserted with `file(1)` before tar.
+- **One command owns the cut:**
+  ```bash
+  bun run scripts/release-fork.ts                 # dry run
+  bun run scripts/release-fork.ts --run           # rebuild fork, stamp, tag, package (no remote)
+  bun run scripts/release-fork.ts --run --publish # BOUNDARY: push + gh release create --prerelease
+  bun run scripts/release-fork.ts --republish --publish  # rebuild/upload assets for today's tag
+  ```
+- **Refuse dirty trees.** The tag must reproduce the artifact.
+- **Publish is the human boundary.** Dry-run by default; `--publish` pushes the branch/tag and
+  runs `gh release create --prerelease` with the local tarball. Do not rely on tag-triggered CI
+  for fork dogfood assets.
+- **After a release ships:** pin the version in dotfiles/mise + `mise lock`; install/reinstall the
+  VS Code extension VSIX on dogfood hosts (`code --install-extension editors/vscode/hunk-vscode-*.vsix`).
+  CLI comes from mise/GitHub release assets, not the VSIX.
+
 ## repo notes
 
 - Local review artifacts are ignored on purpose. Leave them alone unless the user explicitly wants them updated, and do not commit them.
