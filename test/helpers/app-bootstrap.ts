@@ -1,4 +1,10 @@
-import type { AppBootstrap, DiffFile, VcsDiffCommandInput, LayoutMode } from "../../src/core/types";
+import type {
+  AppBootstrap,
+  CursorLine,
+  DiffFile,
+  VcsDiffCommandInput,
+  LayoutMode,
+} from "../../src/core/types";
 
 export function createTestVcsAppBootstrap({
   agentSummary,
@@ -7,6 +13,7 @@ export function createTestVcsAppBootstrap({
   vcsOptions = {},
   initialMode = "split",
   initialCopyDecorations,
+  initialCursorLine,
   initialShowAgentNotes,
   initialShowHunkHeaders,
   initialShowLineNumbers,
@@ -25,6 +32,8 @@ export function createTestVcsAppBootstrap({
   vcsOptions?: Partial<VcsDiffCommandInput["options"]>;
   initialMode?: LayoutMode;
   initialCopyDecorations?: boolean;
+  /** When omitted, AppHost defaults to `"row"` (arrows move the marker, not pure scroll). */
+  initialCursorLine?: CursorLine;
   initialShowAgentNotes?: boolean;
   initialShowHunkHeaders?: boolean;
   initialShowLineNumbers?: boolean;
@@ -58,6 +67,7 @@ export function createTestVcsAppBootstrap({
     },
     initialMode,
     initialCopyDecorations,
+    initialCursorLine,
     initialShowAgentNotes,
     initialShowHunkHeaders,
     initialShowLineNumbers,

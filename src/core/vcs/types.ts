@@ -6,6 +6,7 @@ import type {
   VcsStashShowCommandInput,
   VcsDiffCommandInput,
 } from "../types";
+import type { ExtensionVcsSourceCapabilities } from "../../extension-api/types";
 
 export type VcsId = string;
 
@@ -53,6 +54,8 @@ export interface VcsPatchResult {
   sourceLabel: string;
   title: string;
   patchText: string;
+  /** Exact old/new source provenance for headless editor clients. */
+  sourceCapabilities?: ExtensionVcsSourceCapabilities;
   /** Repo-root-relative untracked paths Hunk synthesizes into added-file diffs. */
   untrackedPaths?: string[];
   /** Exact old/new content lookups, built from the result's `readFileSource`. */

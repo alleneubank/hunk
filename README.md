@@ -157,8 +157,8 @@ Bare `hunk diff` / `hunk diff <range>` / `hunk show` auto-load
 The path is best-effort and skipped when absent or malformed; when it loads,
 agent notes are shown by default. Bare `.hunk/agent-context.json` is **not**
 auto-loaded — use `--agent-context` or config if you still want that path.
-Agents write the target-keyed conventional path (see `docs/agent-workflows.md`);
-when `hunk review export --json` is available it also reports `agentContextPath`. Use `--no-agent-context` to disable loading, and Hunk keeps its own
+Agents read `agentContextPath` from `hunk review export --json` to learn where
+to write. Use `--no-agent-context` to disable loading, and Hunk keeps its own
 `.hunk/` metadata out of untracked review noise.
 
 `exclude_untracked` affects Git/Sapling working-tree `hunk diff` sessions only.

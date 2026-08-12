@@ -140,8 +140,12 @@ describe("plain text pager fallback", () => {
       createPagerDeps({
         stdout: {
           isTTY: false,
-          write(chunk) {
+          // The completion callback is part of the contract, not optional decoration: the
+          // caller exits when this resolves, so a double that never reports completion
+          // models a stream that would strand the writer.
+          write(chunk, callback) {
             written += String(chunk);
+            (callback as ((error?: Error | null) => void) | undefined)?.(null);
             return true;
           },
         },
@@ -165,8 +169,9 @@ describe("plain text pager fallback", () => {
       createPagerDeps({
         stdout: {
           isTTY: false,
-          write(chunk) {
+          write(chunk, callback) {
             written += String(chunk);
+            (callback as ((error?: Error | null) => void) | undefined)?.(null);
             return true;
           },
         },

@@ -147,7 +147,7 @@ Use `--agent-context` when you already have agent-written rationale or notes in 
 
 ### Auto-discovery
 
-At the end of a meaningful changeset, agents write notes to the **target-keyed** conventional path for that review: `<repoRoot>/.hunk/agent-context.<targetId>.json`. Write the target-keyed conventional path for this review; prefer `agentContextPath` from `hunk review export --json` when that command is available. Do not hard-code bare `.hunk/agent-context.json` for auto-discovery. Bare `hunk diff`, `hunk show`, and range reviews auto-load only the keyed file for **that** target when it exists; watch-mode reloads the same path.
+At the end of a meaningful changeset, agents write notes to the **target-keyed** conventional path for that review: `<repoRoot>/.hunk/agent-context.<targetId>.json`. Read `agentContextPath` from `hunk review export --json` for the current invocation — that is the single machine-readable path (do not hard-code a bare `.hunk/agent-context.json` for auto-discovery). Bare `hunk diff`, `hunk show`, and range reviews auto-load only the keyed file for **that** target when it exists; watch-mode reloads the same path.
 
 Precedence is `--no-agent-context` > `--agent-context <path>` > config `agent_context` > keyed conventional path. Config and explicit paths are strict opt-ins (and may still name a legacy bare file). The conventional keyed sidecar is best-effort and silently skipped when absent or malformed.
 

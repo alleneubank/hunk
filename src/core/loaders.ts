@@ -421,6 +421,7 @@ async function loadVcsChangeset(
   return {
     changeset: {
       ...parsedChangeset,
+      sourceCapabilities: result.sourceCapabilities,
       files: [...parsedChangeset.files, ...adapterFiles],
     } satisfies Changeset,
     repoRoot: result.repoRoot,
@@ -468,7 +469,10 @@ export async function loadAppBootstrap(
     }
   }
 
-  const agentContext = await loadAgentContext(input.options.agentContext, { cwd });
+  const agentContext = await loadAgentContext(input.options.agentContext, {
+    cwd,
+    optional: input.options.agentContextOptional,
+  });
 
   let changeset: Changeset;
   let repoRoot: string | undefined;
@@ -511,7 +515,7 @@ export async function loadAppBootstrap(
     initialWrapLines: input.options.wrapLines ?? false,
     initialShowHunkHeaders: input.options.hunkHeaders ?? true,
     initialShowMenuBar: input.options.menuBar ?? true,
-    initialShowAgentNotes: input.options.agentNotes ?? false,
+    initialShowAgentNotes: input.options.agentNotes ?? agentContext !== null,
     initialCopyDecorations: input.options.copyDecorations ?? false,
     initialCursorLine: input.options.cursorLine ?? "row",
   };

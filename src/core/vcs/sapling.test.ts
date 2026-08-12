@@ -2,19 +2,11 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { hasSaplingCli } from "../../../test/helpers/sapling";
 import { buildSlDiffArgs, runSlText } from "./sapling";
 import type { VcsDiffCommandInput } from "../types";
 
-const slAvailable = (() => {
-  try {
-    return (
-      Bun.spawnSync(["sl", "version"], { stdin: "ignore", stdout: "ignore", stderr: "ignore" })
-        .exitCode === 0
-    );
-  } catch {
-    return false;
-  }
-})();
+const slAvailable = await hasSaplingCli();
 const tempDirs: string[] = [];
 
 function cleanupTempDirs() {

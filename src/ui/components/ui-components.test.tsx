@@ -27,7 +27,9 @@ const { HelpDialog } = await import("./chrome/HelpDialog");
 const { AgentCard } = await import("./panes/AgentCard");
 const { AgentInlineNote, measureAgentInlineNoteHeight } = await import("./panes/AgentInlineNote");
 const { DiffPane } = await import("./panes/DiffPane");
+const { MenuBar } = await import("./chrome/MenuBar");
 const { MenuDropdown } = await import("./chrome/MenuDropdown");
+const { buildMenuSpecs } = await import("./chrome/menu");
 const { StatusBar } = await import("./chrome/StatusBar");
 const { DiffFileHeaderRow } = await import("./panes/DiffFileHeaderRow");
 const { PierreDiffView } = await import("../diff/PierreDiffView");
@@ -377,6 +379,25 @@ function frameHasHighlightedMarker(
   });
 }
 
+/** Return whether a rendered text span uses the expected foreground color. */
+function hasTextWithForeground(
+  frame: {
+    lines: Array<{
+      spans: Array<{ text: string; fg?: { buffer?: ArrayLike<number> } }>;
+    }>;
+  },
+  text: string,
+  foregroundColor: string,
+) {
+  return frame.lines.some((line) =>
+    line.spans.some(
+      (span) =>
+        span.text.includes(text) &&
+        capturedTestColorToHex(span.fg)?.toLowerCase() === foregroundColor.toLowerCase(),
+    ),
+  );
+}
+
 /** Measure the rendered background contrast between one word-diff span and its surrounding line. */
 function renderedWordDiffBackgroundDistance(
   frame: { lines: Array<{ spans: Array<{ text: string; bg?: { buffer?: ArrayLike<number> } }> }> },
@@ -481,6 +502,52 @@ describe("UI components", () => {
     expect(frame).not.toContain("+0");
     expect(frame).not.toContain("-0");
     expect(frame).not.toContain("M +2 -1 AI");
+  });
+
+  test("the bundled sidebar view marks viewed files from the public file view", async () => {
+    const theme = resolveTheme("github-dark-default", null);
+    const alpha = createTestDiffFile(
+      "alpha",
+      "src/alpha.ts",
+      "export const alpha = 1;\n",
+      "export const alpha = 2;\n",
+    );
+    const beta = createTestDiffFile(
+      "beta",
+      "src/beta.ts",
+      "export const beta = 1;\n",
+      "export const beta = 2;\n",
+    );
+    // `viewed` reaches the sidebar the same way every other field does: on the
+    // frozen public file view, so any sidebar extension can render progress.
+    const files = toReadOnlyFileViews([{ ...alpha, viewed: true }, beta]);
+    const setup = await testRender(
+      <BuiltInSidebarView
+        files={files}
+        selectedFileId="beta"
+        selectedHunkIndex={0}
+        theme={theme}
+        width={30}
+        keybindings={{ matches: () => false, getKeys: () => [] }}
+        actions={{ selectFile: () => {}, selectHunk: () => {}, notify: () => {} }}
+      />,
+      { width: 36, height: 12 },
+    );
+
+    try {
+      await act(async () => {
+        await setup.renderOnce();
+      });
+
+      expect(setup.captureCharFrame()).toContain("\u2713");
+      // A viewed file also reads as done: its name drops to the muted foreground.
+      expect(hasTextWithForeground(setup.captureSpans(), "alpha.ts", theme.muted)).toBe(true);
+      expect(hasTextWithForeground(setup.captureSpans(), "beta.ts", theme.muted)).toBe(false);
+    } finally {
+      await act(async () => {
+        setup.renderer.destroy();
+      });
+    }
   });
 
   test("DiffPane renders all diff sections in file order", async () => {
@@ -2728,6 +2795,63 @@ describe("UI components", () => {
     expect(frame).toContain("m");
   });
 
+  const menuBarTestMenus = (() => {
+    const item = { kind: "item" as const, label: "One", action: () => {} };
+    return { file: [item], view: [item], navigate: [item], agent: [item], help: [item] };
+  })();
+
+  test("MenuBar renders optional viewed progress without changing its single row", async () => {
+    const theme = resolveTheme("github-dark-default", null);
+    const baseProps = {
+      activeMenuId: null,
+      menuSpecs: buildMenuSpecs(menuBarTestMenus),
+      terminalWidth: 90,
+      theme,
+      topTitle: "repo working tree  +12  -4",
+      onHoverMenu: () => {},
+      onToggleMenu: () => {},
+    };
+    const withProgress = await captureFrame(
+      <MenuBar {...baseProps} viewedProgressText="viewed 1/3" />,
+      90,
+      3,
+    );
+    const withoutProgress = await captureFrame(<MenuBar {...baseProps} />, 90, 3);
+    const withEmptyProgress = await captureFrame(
+      <MenuBar {...baseProps} viewedProgressText="" />,
+      90,
+      3,
+    );
+
+    expect(withProgress).toContain("viewed 1/3");
+    expect(withProgress.split("\n").filter((line) => line.trim().length > 0)).toHaveLength(1);
+    expect(withoutProgress).toContain("repo working tree  +12  -4");
+    expect(withoutProgress).not.toContain("viewed");
+    expect(withEmptyProgress).toBe(withoutProgress);
+  });
+
+  test("MenuBar preserves viewed progress by yielding title width on narrow terminals", async () => {
+    const theme = resolveTheme("github-dark-default", null);
+    const frame = await captureFrame(
+      <MenuBar
+        activeMenuId={null}
+        menuSpecs={buildMenuSpecs(menuBarTestMenus)}
+        terminalWidth={60}
+        theme={theme}
+        topTitle="abcdefghijklmnopqrstuvwxyz"
+        viewedProgressText="viewed 1/3"
+        onHoverMenu={() => {}}
+        onToggleMenu={() => {}}
+      />,
+      60,
+      3,
+    );
+
+    expect(frame).toContain("abcdefg.");
+    expect(frame).not.toContain("abcdefgh");
+    expect(frame).toContain("viewed 1/3");
+  });
+
   test("MenuDropdown repositions wide menus to stay inside the terminal", async () => {
     const theme = resolveTheme("github-dark-default", null);
     const frame = await captureFrame(
@@ -2773,6 +2897,34 @@ describe("UI components", () => {
 
     expect(frame).toContain("filter:");
     expect(frame).toContain("beta");
+  });
+
+  test("StatusBar keeps a long notice on one row beside the keyboard-mode badge", async () => {
+    const theme = resolveTheme("github-dark-default", null);
+    // Notices carry host and extension text (load failures quote absolute paths), so this one is
+    // far wider than the row. Without clamping it reflows the bar to two rows, which pushes the
+    // extension toast rendered directly above it off screen. Viewed progress lives on the menu
+    // bar; the status bar's right segment is the keyboard-mode badge.
+    const frame = await captureFrame(
+      <StatusBar
+        filter=""
+        filterFocused={false}
+        modeText="vim"
+        noticeText={`Extension fixture failed to load • another extension already loaded as "fixture" (${"/very/long/path".repeat(6)})`}
+        terminalWidth={60}
+        theme={theme}
+        onCloseMenu={() => {}}
+        onFilterInput={() => {}}
+        onFilterSubmit={() => {}}
+      />,
+      60,
+      3,
+    );
+    const rows = frame.split("\n").filter((row) => row.trim().length > 0);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toContain("Extension fixture failed to load");
+    expect(rows[0]).toContain("vim");
   });
 
   test("StatusBar renders a notice when no filter is active", async () => {
@@ -2921,7 +3073,7 @@ describe("UI components", () => {
         onClose={() => {}}
       />,
       76,
-      39,
+      41,
     );
 
     const expectedRows = [

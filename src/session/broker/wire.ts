@@ -1,3 +1,4 @@
+import type { ChangeTypes } from "@pierre/diffs";
 import { EXPERIMENTAL_FEATURES, type ExperimentalFeature } from "../../core/experimental";
 import type { CliInput } from "../../core/types";
 import {
@@ -30,6 +31,13 @@ const REVIEW_INPUT_KINDS = new Set<CliInput["kind"]>([
   "difftool",
 ]);
 const EXPERIMENTAL_FEATURE_SET = new Set<string>(EXPERIMENTAL_FEATURES);
+/**
+ * Ceiling on one agent-authored summary.
+ *
+ * Generous for a paragraph and far below anything that could bloat a registration: the
+ * point is that the peer, not Hunk, chooses this string's length.
+ */
+const MAX_AGENT_SUMMARY_CHARS = 4_000;
 
 /** Preserve only recognized experimental feature ids from a session registration. */
 function parseExperimentalFeatures(value: unknown): ExperimentalFeature[] {
@@ -75,6 +83,52 @@ function parseSessionReviewHunk(value: unknown): SessionReviewHunk | null {
   };
 }
 
+/** Every change kind Pierre reports, listed so the wire can reject anything else. */
+const CHANGE_TYPES = new Set<ChangeTypes>([
+  "change",
+  "rename-pure",
+  "rename-changed",
+  "new",
+  "deleted",
+]);
+
+/**
+ * Parse a registered file's change kind, tolerating only a peer that does not send one.
+ *
+ * Registrations cross a process boundary between independently installed Hunk binaries, so
+ * an older session can register with a newer daemon. Rejecting the whole file over a field
+ * that peer never heard of would break the pairing outright, and absence degrades safely to
+ * `change` — the behavior every client had before the field existed.
+ *
+ * A value that is present but not a change kind is different: something is wrong with the
+ * payload, and coercing it would quietly turn a deleted file into an ordinary one, changing
+ * which document a client opens. That fails validation like any other malformed field.
+ */
+function parseChangeType(value: unknown): ChangeTypes | null {
+  if (value === undefined) {
+    return "change";
+  }
+
+  return typeof value === "string" && CHANGE_TYPES.has(value as ChangeTypes)
+    ? (value as ChangeTypes)
+    : null;
+}
+
+/**
+ * Parse one agent-authored summary, dropping anything past the budget.
+ *
+ * Truncated rather than rejected: a summary is descriptive text, so an over-long one is a
+ * sloppy sidecar, not a corrupt registration, and refusing the whole review over it would
+ * lose the diff as well. The bound exists because the peer authors this string.
+ */
+function parseAgentSummary(value: unknown): string | undefined {
+  const summary = brokerWireParsers.parseOptionalString(value);
+
+  return summary === undefined || summary.length <= MAX_AGENT_SUMMARY_CHARS
+    ? summary
+    : summary.slice(0, MAX_AGENT_SUMMARY_CHARS);
+}
+
 /** Parse one registered review file from the app-owned session payload. */
 function parseSessionReviewFile(value: unknown): SessionReviewFile | null {
   const record = brokerWireParsers.asRecord(value);
@@ -86,7 +140,14 @@ function parseSessionReviewFile(value: unknown): SessionReviewFile | null {
   const path = brokerWireParsers.parseRequiredString(record.path);
   const additions = brokerWireParsers.parseNonNegativeInt(record.additions);
   const deletions = brokerWireParsers.parseNonNegativeInt(record.deletions);
-  if (id === null || path === null || additions === null || deletions === null) {
+  const changeType = parseChangeType(record.changeType);
+  if (
+    id === null ||
+    path === null ||
+    additions === null ||
+    deletions === null ||
+    changeType === null
+  ) {
     return null;
   }
 
@@ -113,6 +174,8 @@ function parseSessionReviewFile(value: unknown): SessionReviewFile | null {
     additions,
     deletions,
     hunkCount: (hunks as SessionReviewHunk[]).length,
+    changeType,
+    agentSummary: parseAgentSummary(record.agentSummary),
     patch,
     hunks: hunks as SessionReviewHunk[],
   };
@@ -193,6 +256,10 @@ function parseSessionReviewNoteSummary(value: unknown): SessionReviewNoteSummary
 
   return {
     noteId,
+    // Absent from a snapshot written by a peer older than note keys. Falling back to the id
+    // keeps the payload parseable; it is only ever used to pair a note with a reply, and a
+    // peer that does not send keys has no replies to pair.
+    noteKey: brokerWireParsers.parseOptionalString(record.noteKey) ?? noteId,
     source,
     filePath,
     hunkIndex: brokerWireParsers.parseNonNegativeInt(record.hunkIndex) ?? undefined,
@@ -231,6 +298,7 @@ function parseHunkSessionInfo(value: unknown): HunkSessionInfo | null {
     title,
     sourceLabel,
     experimentalFeatures: parseExperimentalFeatures(record.experimentalFeatures),
+    agentSummary: parseAgentSummary(record.agentSummary),
     files: files as SessionReviewFile[],
   };
 }
@@ -249,7 +317,19 @@ function parseHunkSessionState(value: unknown): HunkSessionState | null {
 
   const selectedHunkIndex = brokerWireParsers.parseNonNegativeInt(record.selectedHunkIndex);
   const showAgentNotes = typeof record.showAgentNotes === "boolean" ? record.showAgentNotes : null;
-  if (selectedHunkIndex === null || showAgentNotes === null) {
+  const viewedFileCount =
+    record.viewedFileCount === undefined
+      ? 0
+      : brokerWireParsers.parseNonNegativeInt(record.viewedFileCount);
+  const viewedFilePaths = record.viewedFilePaths === undefined ? [] : record.viewedFilePaths;
+  if (
+    selectedHunkIndex === null ||
+    showAgentNotes === null ||
+    viewedFileCount === null ||
+    !Array.isArray(viewedFilePaths) ||
+    viewedFilePaths.length > MAX_REGISTRATION_FILES ||
+    viewedFilePaths.some((filePath) => typeof filePath !== "string")
+  ) {
     return null;
   }
 
@@ -272,6 +352,8 @@ function parseHunkSessionState(value: unknown): HunkSessionState | null {
     liveComments,
     reviewNoteCount: reviewNotes.length,
     reviewNotes,
+    viewedFileCount,
+    viewedFilePaths: viewedFilePaths as string[],
   };
 }
 

@@ -42,6 +42,8 @@ export interface BuildAppMenusOptions {
   cursorLine: CursorLine;
   layoutMode: LayoutMode;
   renderSidebar: boolean;
+  /** Whether the currently selected file is marked viewed. */
+  selectedFileViewed: boolean;
   showAgentNotes: boolean;
   showHelp: boolean;
   showHunkHeaders: boolean;
@@ -132,6 +134,7 @@ export function buildAppMenus({
   cursorLine,
   layoutMode,
   renderSidebar,
+  selectedFileViewed,
   showAgentNotes,
   showHelp,
   showHunkHeaders,
@@ -199,6 +202,14 @@ export function buildAppMenus({
       { commandId: "hunk.review.nextAnnotatedHunk", label: "Next comment" },
       SEPARATOR,
       { commandId: "hunk.review.focusFilter", label: "Focus filter" },
+      SEPARATOR,
+      {
+        commandId: "hunk.review.toggleViewed",
+        label: "Viewed",
+        checked: selectedFileViewed,
+      },
+      { commandId: "hunk.review.previousUnviewedFile", label: "Previous unviewed file" },
+      { commandId: "hunk.review.nextUnviewedFile", label: "Next unviewed file" },
     ],
     agent: [
       { commandId: "hunk.view.toggleAgentNotes", label: "Agent notes", checked: showAgentNotes },

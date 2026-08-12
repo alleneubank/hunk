@@ -2,6 +2,7 @@ import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { resolveCanonicalPath } from "../../src/core/paths";
 import { createPtyHarness, dragMouse, lineIndexOf } from "./harness";
 
 const harness = createPtyHarness();
@@ -155,7 +156,7 @@ describe("PTY extensions", () => {
       expect(reloaded).not.toContain("beta.ts");
       expect(reloaded).toContain("alpha.ts");
 
-      expect(readTrustState(configHome)[fixture.dir]).toBe("trusted");
+      expect(readTrustState(configHome)[resolveCanonicalPath(fixture.dir)]).toBe("trusted");
     } finally {
       session.close();
     }
@@ -217,7 +218,7 @@ describe("PTY extensions", () => {
       expect(denied).toContain("beta.ts");
       expect(denied).not.toContain("REPO EXTENSION ACTIVE");
 
-      expect(readTrustState(configHome)[fixture.dir]).toBe("denied");
+      expect(readTrustState(configHome)[resolveCanonicalPath(fixture.dir)]).toBe("denied");
     } finally {
       session.close();
     }

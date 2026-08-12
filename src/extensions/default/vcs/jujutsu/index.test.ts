@@ -108,6 +108,23 @@ describe("JjVcsAdapter", () => {
       expect(diffResult.title).toContain("working copy");
       expect(diffResult.patchText).toContain("diff --git a/file.txt b/file.txt");
       expect(diffResult.patchText).toContain("+two");
+      expect(diffResult.sourceCapabilities).toEqual({ old: "hunk", new: "workspace" });
+      expect(
+        await diffResult.readFileSource?.({
+          path: "file.txt",
+          changeType: "change",
+          isUntracked: false,
+          side: "old",
+        }),
+      ).toBe("one\n");
+      expect(
+        await diffResult.readFileSource?.({
+          path: "file.txt",
+          changeType: "change",
+          isUntracked: false,
+          side: "new",
+        }),
+      ).toBe("two\n");
 
       const showInput = {
         kind: "show",
@@ -120,6 +137,23 @@ describe("JjVcsAdapter", () => {
 
       expect(showResult.title).toContain("show @");
       expect(showResult.patchText).toContain("diff --git a/file.txt b/file.txt");
+      expect(showResult.sourceCapabilities).toEqual({ old: "hunk", new: "hunk" });
+      expect(
+        await showResult.readFileSource?.({
+          path: "file.txt",
+          changeType: "change",
+          isUntracked: false,
+          side: "old",
+        }),
+      ).toBe("one\n");
+      expect(
+        await showResult.readFileSource?.({
+          path: "file.txt",
+          changeType: "change",
+          isUntracked: false,
+          side: "new",
+        }),
+      ).toBe("two\n");
       expect(
         JjVcsAdapter.operations["working-tree-diff"]!.watchSignature!(diffInput, { cwd: repo }),
       ).toContain("+two");

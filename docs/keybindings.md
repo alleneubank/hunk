@@ -59,18 +59,21 @@ The built-in commands and the keys they ship with:
 | `hunk.review.nextAnnotatedHunk`                | Next annotated hunk                            | `}`                          |
 | `hunk.review.nextFile`                         | Next file                                      | `.`                          |
 | `hunk.review.nextHunk`                         | Next hunk                                      | `]`                          |
+| `hunk.review.nextUnviewedFile`                 | Next unviewed file                             | `>`                          |
 | `hunk.review.pageDown`                         | Scroll down one page                           | `pagedown`, `space`, `f`     |
 | `hunk.review.pageUp`                           | Scroll up one page                             | `pageup`, `b`, `shift+space` |
 | `hunk.review.previousAnnotatedFile`            | Previous annotated file                        | _(none)_                     |
 | `hunk.review.previousAnnotatedHunk`            | Previous annotated hunk                        | `{`                          |
 | `hunk.review.previousFile`                     | Previous file                                  | `,`                          |
 | `hunk.review.previousHunk`                     | Previous hunk                                  | `[`                          |
+| `hunk.review.previousUnviewedFile`             | Previous unviewed file                         | `<`                          |
 | `hunk.review.scrollCodeLeft`                   | Scroll code left (shifted scrolls fast)        | `left`, `shift+left`         |
 | `hunk.review.scrollCodeRight`                  | Scroll code right (shifted scrolls fast)       | `right`, `shift+right`       |
 | `hunk.review.startNote`                        | Add a review note                              | `c`                          |
 | `hunk.review.stepDown`                         | Scroll down one row                            | `down`, `j`                  |
 | `hunk.review.stepUp`                           | Scroll up one row                              | `up`, `k`                    |
 | `hunk.review.toggleHunkGap`                    | Expand or collapse the selected context        | `z`                          |
+| `hunk.review.toggleViewed`                     | Toggle file viewed                             | `v`                          |
 | `hunk.view.applyFilePresentationToAllMatching` | Apply current file presentation to all matches | _(none)_                     |
 | `hunk.view.cursorLineNumber`                   | Mark the current line number                   | _(none)_                     |
 | `hunk.view.cursorLineOff`                      | Hide the current-line marker                   | _(none)_                     |

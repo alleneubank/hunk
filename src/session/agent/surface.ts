@@ -123,6 +123,10 @@ export const AUXILIARY_AGENT_OPTIONS = {
     flag: "--agent-context <path>",
     description: "JSON sidecar with agent rationale",
   },
+  noAgentContext: {
+    flag: "--no-agent-context",
+    description: "ignore any agent-context sidecar (disable auto-discovery)",
+  },
   excludeUntracked: {
     flag: "--exclude-untracked",
     description: "exclude untracked files from working tree reviews",
@@ -266,6 +270,22 @@ export const SESSION_AGENT_COMMANDS = {
       "hunk session navigate --repo . --file src/App.tsx --old-line 355",
       "hunk session navigate --repo . --next-comment",
       "hunk session navigate --repo . --prev-comment",
+    ],
+  },
+  "viewed-set": {
+    name: "session viewed",
+    summary: "mark one file viewed or unviewed in a live Hunk session",
+    positionals: [{ token: "[sessionId]" }],
+    options: [
+      diffFileOption,
+      repoOption,
+      { flag: "--unset", description: "clear viewed state instead of setting it" },
+      jsonOption,
+    ],
+    synopsis: [`hunk session viewed ${SESSION_SELECTOR_SYNOPSIS} --file <path> [--unset] [--json]`],
+    examples: [
+      "hunk session viewed --repo . --file src/App.tsx",
+      "hunk session viewed --repo . --file src/App.tsx --unset",
     ],
   },
   reload: {

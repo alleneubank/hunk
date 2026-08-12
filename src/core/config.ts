@@ -1,5 +1,5 @@
 import fs from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { sanitizeTerminalLine } from "../lib/terminalText";
 import { BUNDLED_SHIKI_THEME_IDS, LEGACY_THEME_ID_ALIASES } from "./themeCatalog";
 import {
@@ -16,6 +16,7 @@ import { LEGACY_CUSTOM_SYNTAX_COLOR_KEYS, resolveSyntaxScopeOverrides } from "./
 import { conventionalAgentContextPath, HUNK_DIR_NAME, resolveGlobalConfigPath } from "./paths";
 import { LEGACY_CUSTOM_SYNTAX_NOTICES, type StartupNotice } from "./startupNotice";
 import { DEFAULT_TAB_WIDTH, validateTabWidth } from "./tabWidth";
+import { isRecord } from "./typeGuards";
 import { detectVcs, findVcsRepoRootCandidate, getDefaultVcsAdapter } from "./vcs";
 import type {
   CliInput,
@@ -93,10 +94,6 @@ export interface HunkConfigResolution {
   globalConfigPath?: string;
   repoConfigPath?: string;
   viewPreferencesConfigPath?: string;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /** Serialize one primitive TOML preference value. */
@@ -250,8 +247,7 @@ export const CONFIG_REFERENCE_OPTIONS: readonly ConfigReferenceOption[] = [
     property: "agentContext",
     type: "string",
     accepted: "a path to an agent-context JSON sidecar",
-    defaultValue:
-      "`.hunk/agent-context.<targetId>.json` for the current review target when present",
+    defaultValue: `\`${HUNK_DIR_NAME}/agent-context.<targetId>.json\` for the current review target when present`,
     description:
       "Point at an agent-rationale sidecar. Relative paths resolve against the repo root. A configured path is a strict opt-in that outranks auto-discovery of the target-keyed conventional file. Bare `.hunk/agent-context.json` is never auto-loaded; pass it here or via `--agent-context` if you still want that path.",
   },
@@ -887,6 +883,7 @@ function mergeOptions(base: CommonOptions, overrides: CommonOptions): CommonOpti
     vcs: overrides.vcs ?? base.vcs,
     theme: overrides.theme ?? base.theme,
     agentContext: overrides.agentContext ?? base.agentContext,
+    noAgentContext: overrides.noAgentContext ?? base.noAgentContext,
     agentContextOptional: overrides.agentContextOptional ?? base.agentContextOptional,
     pager: overrides.pager ?? base.pager,
     watch: overrides.watch ?? base.watch,
@@ -1058,10 +1055,13 @@ export function resolveConfiguredCliInput(
 
   let resolvedOptions: CommonOptions = {
     ...buildDefaultConfigPreferences(cwd),
-    // Do not seed from CLI agentContext here: re-resolution would treat a conventional
-    // path as an explicit strict path. Seeding stays empty until the resolution block below.
+    // Seeded empty on purpose: the sidecar seam below reads this slot to learn what the *config*
+    // layers asked for. Seeding it from CLI input would make a re-resolved conventional path look
+    // like an explicit one, and watch reloads would silently turn strict.
     agentContext: undefined,
-    // Leave agentNotes unresolved so loadAppBootstrap can default from whether a sidecar loads.
+    // `agent_notes` carries a documented catalog default, but resolution must leave it unresolved:
+    // `loadAppBootstrap` turns notes ON exactly when a sidecar loads and OFF otherwise. Taking the
+    // catalog default here would pin it OFF before discovery ever runs.
     agentNotes: undefined,
     pager: input.options.pager ?? false,
     experimental: false,
@@ -1121,10 +1121,10 @@ export function resolveConfiguredCliInput(
     resolvedAgentContext = input.options.agentContext;
   } else if (configAgentContext) {
     // Configured paths are strict opt-ins and resolve against the repo root when present.
-    resolvedAgentContext = join(repoRoot ?? cwd, configAgentContext);
+    resolvedAgentContext = resolve(repoRoot ?? cwd, configAgentContext);
   } else if (repoRoot) {
     // Keyed conventional path only — bare agent-context.json is never auto-discovered
-    // (modem-dev/hunk#540). Watch tracks create/rewrite/delete of this file.
+    // (SPEC REQ-AGENT-001 / #540). Watch tracks create/rewrite/delete of this file.
     const keyedPath = conventionalAgentContextPath(repoRoot, input);
     if (keyedPath) {
       resolvedAgentContext = keyedPath;

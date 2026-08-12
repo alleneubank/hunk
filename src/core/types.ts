@@ -7,9 +7,11 @@ import type {
   ExtensionVcsDiffInput,
   ExtensionVcsShowInput,
   ExtensionVcsStashShowInput,
+  ExtensionVcsSourceCapabilities,
   NamedCustomThemeConfig,
 } from "../extension-api/types";
 import type { FileSourceFetcher } from "./fileSource";
+import type { DiffSide } from "./liveComments";
 import type { StartupNotice } from "./startupNotice";
 import type { VcsAdapter } from "./vcs/types";
 
@@ -82,6 +84,8 @@ export interface Changeset {
   title: string;
   summary?: string;
   agentSummary?: string;
+  /** Source provenance for editor clients when the VCS adapter can provide it. */
+  sourceCapabilities?: ExtensionVcsSourceCapabilities;
   files: DiffFile[];
 }
 
@@ -216,6 +220,15 @@ export interface SessionNavigateCommandInput {
   commentDirection?: "next" | "prev";
 }
 
+export interface SessionViewedSetCommandInput {
+  kind: "session";
+  action: "viewed-set";
+  output: SessionCommandOutput;
+  selector: SessionSelectorInput;
+  filePath: string;
+  viewed: boolean;
+}
+
 export interface SessionReloadCommandInput {
   kind: "session";
   action: "reload";
@@ -292,6 +305,7 @@ export type SessionCommandInput =
   | SessionGetCommandInput
   | SessionReviewCommandInput
   | SessionNavigateCommandInput
+  | SessionViewedSetCommandInput
   | SessionReloadCommandInput
   | SessionCommentAddCommandInput
   | SessionCommentApplyCommandInput
@@ -361,6 +375,54 @@ export interface MarkupGuideCommandInput {
   kind: "markup-guide";
 }
 
+/** One headless operation over a repo-local review. */
+export type ReviewOperation =
+  | { name: "export"; includePatch: boolean }
+  | {
+      name: "comment-add";
+      file: string;
+      side: DiffSide;
+      line: number;
+      body: string;
+      author?: string;
+    }
+  // A reply names the comment it answers rather than a line: it inherits its placement from
+  // that comment, so there is nothing about a side or a line for a caller to get wrong.
+  | { name: "comment-reply"; file: string; id: string; body: string; author?: string }
+  // Note operations name a note rather than a comment: the reviewer is answering the agent,
+  // and whether a conversation about that note exists yet is Hunk's bookkeeping, not the
+  // client's. `note` is the id from the same payload the client is looking at.
+  | { name: "note-reply"; file: string; note: string; body: string; author?: string }
+  | { name: "note-status"; file: string; note: string; status: "active" | "resolved" }
+  | { name: "comment-status"; file: string; id: string; status: "active" | "resolved" }
+  | { name: "comment-delete"; file: string; id: string }
+  // A set of files, so marking a directory viewed is one write under one lock. One file is
+  // just the single-element case, which keeps the two from being separate code paths.
+  | { name: "viewed-set"; files: string[]; viewed: boolean }
+  | { name: "file-source"; file: string; side: DiffSide }
+  // Where an agent points its human partner. The target rides on the surrounding `input`
+  // like every other operation's, so an agent names a changeset exactly as it would for
+  // `export` and the two can never mean different things.
+  | { name: "focus-set"; file?: string; side?: DiffSide; line?: number }
+  | { name: "focus-get" }
+  | { name: "focus-clear" };
+
+/**
+ * Headless review request, the surface an editor client drives Hunk through.
+ *
+ * Carries the review as a normal `CliInput` rather than its own range fields, so range
+ * selection, pathspecs, and config layering stay literally the same code the interactive
+ * commands run through. Every operation shares that loading path because each one needs
+ * the current patch — to anchor a new comment, or to hash a file for viewed state.
+ */
+export interface ReviewCommandInput {
+  kind: "review";
+  input: CliInput;
+  operation: ReviewOperation;
+  /** Explicit repo root, when the command was not run inside the repo. */
+  repo?: string;
+}
+
 export type ParsedCliInput =
   | CliInput
   | HelpCommandInput
@@ -368,7 +430,8 @@ export type ParsedCliInput =
   | DaemonServeCommandInput
   | SessionCommandInput
   | MarkupRenderCommandInput
-  | MarkupGuideCommandInput;
+  | MarkupGuideCommandInput
+  | ReviewCommandInput;
 
 export interface ReloadContext {
   cwd: string;

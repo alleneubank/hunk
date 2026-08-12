@@ -54,9 +54,10 @@ const WORKFLOW = [
   "4. hunk session review --repo . --include-patch --json  # opt into raw diff text only when needed",
   "5. hunk session context --repo .                        # check current focus when needed",
   "6. hunk session navigate ...                            # move to the right place",
-  "7. hunk session reload -- <command>                     # swap contents if needed",
-  "8. hunk session comment add ...                         # leave one review note",
-  "9. hunk session comment apply ...                       # apply many agent notes in one stdin batch",
+  "7. hunk session viewed --repo . --file <path>           # mark a file covered",
+  "8. hunk session reload -- <command>                     # swap contents if needed",
+  "9. hunk session comment add ...                         # leave one review note",
+  "10. hunk session comment apply ...                      # apply many agent notes in one stdin batch",
   "```",
 ];
 
@@ -104,6 +105,21 @@ const NAVIGATE_SECTION = [
   "- `--hunk <n>` is 1-based",
   "- `--new-line` / `--old-line` are 1-based line numbers on that diff side",
   "- Use either `--next-comment` or `--prev-comment`, not both",
+];
+
+const VIEWED_SECTION = [
+  "### Viewed files",
+  "",
+  "After covering a file, mark it viewed so the user and other agents can track review progress:",
+  "",
+  ...bashFence(synopsisLines(commands["viewed-set"])),
+  "",
+  "Examples:",
+  "",
+  ...bashFence(commands["viewed-set"].examples ?? []),
+  "",
+  "Use `--unset` when the file needs another pass. JSON session snapshots expose",
+  "`viewedFileCount` and `viewedFilePaths` for choosing the next unviewed file.",
 ];
 
 const RELOAD_SECTION = [
@@ -172,6 +188,16 @@ const NEW_FILES_SECTION = [
   ...bashFence(["hunk session reload --repo . -- diff --exclude-untracked"]),
 ];
 
+const AGENT_CONTEXT_SECTION = [
+  "## Agent context sidecars",
+  "",
+  "At the end of a meaningful changeset, write notes to the **target-keyed** conventional path so bare `hunk diff` / range / show auto-load them with zero flags.",
+  "",
+  "Read `agentContextPath` from `hunk review export --json` for the current invocation (absolute path to `.hunk/agent-context.<targetId>.json`). That is the single machine-readable path surface — do not hard-code a bare `.hunk/agent-context.json` for auto-discovery.",
+  "",
+  "Use range-based annotations with `oldRange` / `newRange`; the file order in the sidecar drives sidebar and review order. Explicit `--agent-context <path>` still loads any path, including a legacy bare name.",
+];
+
 const GUIDING_SECTION = [
   "## Guiding a review",
   "",
@@ -197,16 +223,6 @@ const GUIDING_SECTION = [
   "- Don't comment on every hunk -- highlight what the user wouldn't spot themselves",
 ];
 
-const AGENT_CONTEXT_SECTION = [
-  "## Agent context sidecars",
-  "",
-  "At the end of a meaningful changeset, write notes to the **target-keyed** conventional path so bare `hunk diff` / range / show auto-load them with zero flags.",
-  "",
-  "Write `.hunk/agent-context.<targetId>.json` for the current review target (same args as the review command). When `hunk review export --json` is available, prefer its `agentContextPath` field. Never hard-code bare `.hunk/agent-context.json` for auto-discovery.",
-  "",
-  "Use range-based annotations with `oldRange` / `newRange`; the file order in the sidecar drives sidebar and review order. Explicit `--agent-context <path>` still loads any path, including a legacy bare name.",
-];
-
 /** Render the "Common errors" section from the shared agent error catalog. */
 function commonErrorsSection() {
   return [
@@ -225,6 +241,7 @@ export function renderHunkReviewSkill() {
     ["## Commands"],
     INSPECT_SECTION,
     NAVIGATE_SECTION,
+    VIEWED_SECTION,
     RELOAD_SECTION,
     COMMENTS_SECTION,
     STML_SECTION,

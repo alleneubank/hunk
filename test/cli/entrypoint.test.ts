@@ -18,6 +18,11 @@ function git(cwd: string, ...args: string[]) {
   }
 }
 
+/** Quote one argument for `sh -c`, which is the only way to get a real pipeline here. */
+function shellQuote(value: string) {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
 /** Drop the ambient markers that would make Hunk treat this run as a captured pager host. */
 function uncapturedPagerEnv() {
   return Object.fromEntries(
@@ -348,4 +353,35 @@ describe("CLI entrypoint contracts", () => {
       rmSync(repoDir, { recursive: true, force: true });
     }
   });
+
+  // POSIX-only harness, not a POSIX-only defect: Bun and `child_process` both drain a
+  // child's stdout eagerly, so only a reader that is a separate process exposes it.
+  test.skipIf(process.platform === "win32")(
+    "passes text larger than one pipe buffer through the pager without truncating it",
+    () => {
+      const lines: string[] = [];
+      for (let index = 0; index < 20_000; index += 1) {
+        lines.push(`plain line ${index}`);
+      }
+
+      const text = `${lines.join("\n")}\n`;
+      const inputDir = mkdtempSync(join(tmpdir(), "hunk-pager-pipe-"));
+      const inputPath = join(inputDir, "input.txt");
+      writeFileSync(inputPath, text);
+
+      try {
+        const entrypoint = shellQuote(join(process.cwd(), "src/main.tsx"));
+        const proc = Bun.spawnSync(
+          ["sh", "-c", `bun run ${entrypoint} pager < ${shellQuote(inputPath)} | cat`],
+          { cwd: process.cwd(), stdin: "ignore", stdout: "pipe", stderr: "pipe" },
+        );
+
+        // Guards the fixture itself: a payload under one buffer would pass either way.
+        expect(text.length).toBeGreaterThan(64 * 1024);
+        expect(Buffer.from(proc.stdout).toString("utf8")).toBe(text);
+      } finally {
+        rmSync(inputDir, { recursive: true, force: true });
+      }
+    },
+  );
 });
