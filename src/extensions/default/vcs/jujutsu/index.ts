@@ -63,6 +63,10 @@ export const JjVcsAdapter = {
           sourceLabel: repoRoot,
           title: input.range ? `${repoName} ${input.range}` : `${repoName} working copy`,
           patchText: runJjText({ input, args: buildJjDiffArgs(input), cwd }),
+          sourceCapabilities: {
+            old: "hunk" as const,
+            new: input.range ? ("hunk" as const) : ("workspace" as const),
+          },
         };
       },
       watchSignature(input, { cwd }) {
@@ -79,6 +83,7 @@ export const JjVcsAdapter = {
           sourceLabel: repoRoot,
           title: `${repoName} show ${revset}`,
           patchText: runJjText({ input, args: buildJjShowArgs(input), cwd }),
+          sourceCapabilities: { old: "hunk" as const, new: "hunk" as const },
         };
       },
       watchSignature(input, { cwd }) {

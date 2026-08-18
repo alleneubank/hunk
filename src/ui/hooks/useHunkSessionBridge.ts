@@ -1,6 +1,7 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import type { ReviewProducer } from "../../app/review/producer";
 import type { DiffFile } from "../../core/changeset/model";
+import { findDiffFileByPath } from "../../core/liveComments";
 import type { CliInput } from "../../core/run/commandInputs";
 import { reviewHunkRanges } from "../../core/review/geometry";
 import { createHunkSessionBridge } from "../../app/session/bridge";
@@ -20,6 +21,7 @@ export function useHunkSessionBridge({
   addLiveCommentBatch,
   clearAgentLineHighlights,
   clearLiveComments,
+  files,
   hostClient,
   liveCommentCount,
   liveCommentSummaries,
@@ -35,13 +37,16 @@ export function useHunkSessionBridge({
   selectedFile,
   selectedHunk,
   selectedHunkIndex,
+  setFileViewed,
   showAgentNotes,
+  viewedFileIds,
 }: {
   addAgentLineHighlight: TerminalReview["addAgentLineHighlight"];
   addLiveComment: TerminalReview["addLiveComment"];
   addLiveCommentBatch: TerminalReview["addLiveCommentBatch"];
   clearAgentLineHighlights: TerminalReview["clearAgentLineHighlights"];
   clearLiveComments: TerminalReview["clearLiveComments"];
+  files: DiffFile[];
   hostClient?: HunkSessionBrokerClient;
   liveCommentCount: number;
   liveCommentSummaries: SessionLiveCommentSummary[];
@@ -63,8 +68,16 @@ export function useHunkSessionBridge({
   selectedFile: DiffFile | undefined;
   selectedHunk: DiffFile["metadata"]["hunks"][number] | undefined;
   selectedHunkIndex: number;
+  setFileViewed: (fileId: string, viewed: boolean) => void;
   showAgentNotes: boolean;
+  viewedFileIds: ReadonlySet<string>;
 }) {
+  const viewedFileIdsRef = useRef(viewedFileIds);
+
+  useEffect(() => {
+    viewedFileIdsRef.current = viewedFileIds;
+  }, [viewedFileIds]);
+
   const bridge = useMemo(
     () =>
       createHunkSessionBridge({
@@ -78,6 +91,29 @@ export function useHunkSessionBridge({
         reloadSession: (nextInput, options) => reloadSession(nextInput, { ...options }),
         removeLiveComment,
         reviewProducer,
+        setFileViewed: (input) => {
+          const file = findDiffFileByPath(files, input.filePath);
+          if (!file) {
+            throw new Error(`No diff file matches ${input.filePath}.`);
+          }
+
+          const nextViewedFileIds = new Set(viewedFileIdsRef.current);
+          if (input.viewed) {
+            nextViewedFileIds.add(file.id);
+          } else {
+            nextViewedFileIds.delete(file.id);
+          }
+
+          viewedFileIdsRef.current = nextViewedFileIds;
+          setFileViewed(file.id, input.viewed);
+
+          return {
+            filePath: file.path,
+            viewed: input.viewed,
+            viewedFileCount: nextViewedFileIds.size,
+            totalFileCount: files.length,
+          };
+        },
       }),
     [
       addAgentLineHighlight,
@@ -85,11 +121,13 @@ export function useHunkSessionBridge({
       addLiveCommentBatch,
       clearAgentLineHighlights,
       clearLiveComments,
+      files,
       navigateToLocation,
       openAgentNotes,
       reloadSession,
       removeLiveComment,
       reviewProducer,
+      setFileViewed,
     ],
   );
 
@@ -127,6 +165,10 @@ export function useHunkSessionBridge({
         liveComments: liveCommentSummaries,
         reviewNoteCount,
         reviewNotes: reviewNoteSummaries,
+        viewedFileCount: viewedFileIds.size,
+        viewedFilePaths: files
+          .filter((file) => viewedFileIds.has(file.id))
+          .map((file) => file.path),
         // Where this review currently is, so the daemon's mirror can order what it
         // receives instead of guessing whether a snapshot is newer than the last.
         ...(publicationGeneration
@@ -153,5 +195,7 @@ export function useHunkSessionBridge({
     selectedHunk,
     selectedHunkIndex,
     showAgentNotes,
+    viewedFileIds,
+    files,
   ]);
 }

@@ -18,6 +18,7 @@ import type {
   ExtensionManageCommandInput,
   MarkupRenderCommandInput,
   ParsedCliInput,
+  ReviewCommandInput,
   SelfUpdateCommandInput,
   SessionCommandInput,
 } from "../core/run/commandInputs";
@@ -75,6 +76,10 @@ export type StartupPlan =
     }
   | {
       kind: "markup-guide";
+    }
+  | {
+      kind: "review-command";
+      input: ReviewCommandInput;
     }
   | {
       kind: "extension-manage";
@@ -194,6 +199,13 @@ export async function prepareStartupPlan(
   if (parsedCliInput.kind === "update") {
     return {
       kind: "self-update",
+      input: parsedCliInput,
+    };
+  }
+
+  if (parsedCliInput.kind === "review") {
+    return {
+      kind: "review-command",
       input: parsedCliInput,
     };
   }

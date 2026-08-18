@@ -1,0 +1,149 @@
+import * as vscode from "vscode";
+
+/**
+ * Renders the agent's account of the change as formatted text above the file list.
+ *
+ * A webview rather than the tree's `message`, which is a plain `string`: the summary is
+ * authored markdown, and showing its source — literal backticks around every identifier —
+ * makes the one piece of prose in the panel the least readable thing in it. This is the only
+ * webview in the extension, and it stays deliberately small: no scripts, no state, no message
+ * channel. It renders one document and nothing else.
+ *
+ * Markdown is converted here rather than by pulling in a parser. The summary is prose with
+ * code spans, emphasis, and links; anything more elaborate belongs in the review notes, which
+ * have their own surface.
+ */
+export class ReviewSummaryView implements vscode.WebviewViewProvider {
+  static readonly viewId = "hunkReview.summary";
+
+  private view: vscode.WebviewView | undefined;
+  private summary: string | undefined;
+
+  resolveWebviewView(view: vscode.WebviewView): void {
+    this.view = view;
+    // No scripts to enable, so none are allowed. A summary is text from the repository, and
+    // text from the repository must never be able to execute in the editor's context.
+    view.webview.options = { enableScripts: false };
+    this.render();
+  }
+
+  /** Show one summary, or nothing when the review has none. */
+  setSummary(summary: string | undefined): void {
+    this.summary = summary;
+
+    // Set here and not in `render`, which returns early until the view exists. The view is
+    // contributed `when: hunkReview.hasSummary`, so it is only ever resolved after this key
+    // is true — a key set during rendering could therefore never become true, and the panel
+    // could never appear at all. The visibility signal has to come from the data, not from
+    // the surface the data is waiting on.
+    void vscode.commands.executeCommand(
+      "setContext",
+      "hunkReview.hasSummary",
+      summary !== undefined,
+    );
+
+    this.render();
+  }
+
+  private render(): void {
+    // Absent until VS Code reveals the view. Whatever summary arrived first is held, and
+    // `resolveWebviewView` renders it the moment there is somewhere to put it.
+    if (!this.view) {
+      return;
+    }
+
+    this.view.webview.html = this.summary === undefined ? "" : summaryDocument(this.summary);
+  }
+}
+
+/** Escape text so repository content can never be read as markup. */
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+/**
+ * Sentinel wrapping a parked code span while the rest of a line is rendered.
+ *
+ * A Private Use Area codepoint rather than NUL: both are absent from any real changeset
+ * summary, but a literal NUL in the source makes git classify this file as binary, and an
+ * unreviewable file in a review tool is its own kind of bug. Written as an escape so the
+ * source itself stays plain ASCII.
+ */
+const CODE_SPAN_SENTINEL = "\uE000";
+
+/**
+ * Render the inline markdown a changeset summary actually uses.
+ *
+ * Applied to already-escaped text, so a `<` in the source stays visible as a character and
+ * only these patterns become markup. Ordered so code spans win: an underscore inside
+ * `` `snake_case` `` is part of an identifier, not emphasis.
+ */
+function renderInline(escaped: string): string {
+  const codeSpans: string[] = [];
+
+  return (
+    escaped
+      .replace(/`([^`]+)`/g, (_match, code: string) => {
+        // Parked while the rest is rendered, so emphasis never reaches inside an identifier.
+        codeSpans.push(code);
+        return `${CODE_SPAN_SENTINEL}${codeSpans.length - 1}${CODE_SPAN_SENTINEL}`;
+      })
+      .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (match, label: string, href: string) =>
+        // Only web links; a `javascript:` or `file:` target in repository text is not a link
+        // this panel will render.
+        /^https?:\/\//.test(href) ? `<a href="${href}">${label}</a>` : match,
+      )
+      .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+      .replace(/(^|\W)_([^_]+)_(?=\W|$)/g, "$1<em>$2</em>")
+      // Built from the sentinel rather than repeating its escape, so the parking and the
+      // restoring cannot drift apart. Local because a global-flagged regex carries `lastIndex`.
+      .replace(
+        new RegExp(`${CODE_SPAN_SENTINEL}(\\d+)${CODE_SPAN_SENTINEL}`, "g"),
+        (_match, index: string) => `<code>${codeSpans[Number(index)]}</code>`,
+      )
+  );
+}
+
+/** Turn one summary into the document the panel shows. */
+export function summaryDocument(summary: string): string {
+  const paragraphs = summary
+    .split(/\n{2,}/)
+    .map((paragraph) => paragraph.trim())
+    .filter((paragraph) => paragraph.length > 0)
+    .map((paragraph) => `<p>${renderInline(escapeHtml(paragraph)).replace(/\n/g, " ")}</p>`)
+    .join("");
+
+  // Every color is a VS Code theme variable, so the panel follows the user's theme rather
+  // than carrying its own palette that would be wrong in half of them.
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline';">
+<style>
+  body {
+    padding: 0 12px 8px;
+    margin: 0;
+    color: var(--vscode-foreground);
+    font-family: var(--vscode-font-family);
+    font-size: var(--vscode-font-size);
+    line-height: 1.5;
+  }
+  p { margin: 8px 0; }
+  code {
+    font-family: var(--vscode-editor-font-family);
+    font-size: 0.9em;
+    padding: 1px 4px;
+    border-radius: 3px;
+    background: var(--vscode-textCodeBlock-background);
+  }
+  a { color: var(--vscode-textLink-foreground); }
+</style>
+</head>
+<body>${paragraphs}</body>
+</html>`;
+}

@@ -8,7 +8,7 @@
  * app-facing types above them.
  */
 import type { FileDiffMetadata } from "@pierre/diffs";
-import type { AgentFileContext } from "../../extension-api/types";
+import type { AgentFileContext, ExtensionVcsSourceCapabilities } from "../../extension-api/types";
 import type { FileSourceFetcher } from "./fileSource";
 
 /** One loaded review sidecar: the changeset summary plus every annotated file it names. */
@@ -53,5 +53,7 @@ export interface Changeset {
   title: string;
   summary?: string;
   agentSummary?: string;
+  /** Source provenance for editor clients when the VCS adapter can provide it. */
+  sourceCapabilities?: ExtensionVcsSourceCapabilities;
   files: DiffFile[];
 }

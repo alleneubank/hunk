@@ -7,6 +7,7 @@ import { sanitizeTerminalText } from "./lib/terminalText";
 import { serveSessionBrokerDaemon } from "./session/broker/brokerServer";
 import { runSessionCommand } from "./session/agent/commands";
 import { disposeHighlightWorker } from "./ui/diff/worker";
+import { exitAfterWriting, flushWrite } from "./lib/stdio";
 
 async function main() {
   const startupPlan = await prepareStartupPlan();
@@ -66,6 +67,17 @@ async function main() {
     );
   }
 
+  if (startupPlan.kind === "review-command") {
+    const { formatReviewError, formatReviewResult, runReviewCommand } =
+      await import("./app/reviewCommand");
+    try {
+      await exitAfterWriting(formatReviewResult(await runReviewCommand(startupPlan.input)));
+    } catch (error) {
+      await flushWrite(process.stderr, formatReviewError(error));
+      process.exit(1);
+    }
+  }
+
   if (startupPlan.kind === "markup-guide") {
     const { runMarkupGuideCommand } = await import("./ui/lib/stml/cli");
     process.exit(runMarkupGuideCommand({ stdout: (text) => process.stdout.write(text) }));
@@ -121,7 +133,14 @@ async function main() {
   }
 }
 
-await main().catch((error) => {
-  process.stderr.write(formatCliError(error));
+await main().catch(async (error) => {
+  // Headless `hunk review` callers parse stderr as JSON; a text stack there looks like
+  // "the review is empty" once they fail to decode it.
+  if (process.argv[2] === "review") {
+    const { formatReviewError } = await import("./app/reviewCommand");
+    await flushWrite(process.stderr, formatReviewError(error));
+  } else {
+    process.stderr.write(formatCliError(error));
+  }
   process.exit(1);
 });

@@ -14,6 +14,7 @@ import type {
   NavigatedSelectionResult,
   ReloadedSessionResult,
   RemovedCommentResult,
+  SetViewedResult,
 } from "../../session/types";
 import { applySessionReviewAction, readSessionReviewResource } from "./reviewCommands";
 
@@ -35,6 +36,9 @@ export interface HunkSessionBridgeHandlers {
   navigateToLocation: (
     input: Extract<HunkSessionServerMessage, { command: "navigate_to_hunk" }>["input"],
   ) => NavigatedSelectionResult;
+  setFileViewed?: (
+    input: Extract<HunkSessionServerMessage, { command: "set_viewed" }>["input"],
+  ) => SetViewedResult;
   addAgentLineHighlight: (
     input: Extract<HunkSessionServerMessage, { command: "highlight" }>["input"],
   ) => AppliedHighlightResult;
@@ -99,6 +103,11 @@ export function createHunkSessionBridge(handlers: HunkSessionBridgeHandlers) {
         }
         case "navigate_to_hunk":
           return handlers.navigateToLocation(message.input);
+        case "set_viewed":
+          if (!handlers.setFileViewed) {
+            throw new Error("This Hunk session does not support viewed-state updates.");
+          }
+          return handlers.setFileViewed(message.input);
         case "highlight":
           return handlers.addAgentLineHighlight(message.input);
         case "clear_highlights":

@@ -1,3 +1,4 @@
+import type { ChangeTypes } from "@pierre/diffs";
 import { DEFAULT_SOURCE_TEXT_MAX_BYTES, readFileTextWithLimit } from "../../lib/sourceText";
 
 export { DEFAULT_SOURCE_TEXT_MAX_BYTES } from "../../lib/sourceText";
@@ -14,6 +15,28 @@ export { DEFAULT_SOURCE_TEXT_MAX_BYTES } from "../../lib/sourceText";
 export type FileSourceSpec = { kind: "none" } | { kind: "fs"; absolutePath: string };
 
 export type FileSourceSide = "old" | "new";
+
+/**
+ * Whether one side of a change carries content at all.
+ *
+ * A fetcher answers `null` both for a side that does not exist and for a side it failed to
+ * read, and those two are indistinguishable in the return value alone. The change kind is
+ * what separates them: an added file genuinely has no old side and a deleted file has no
+ * new side, so `null` there is the right answer — while `null` for a side that should exist
+ * is a failed read, and a client that renders it as empty shows a blank document in place
+ * of source it never received.
+ */
+export function fileSideExists(changeType: ChangeTypes, side: FileSourceSide): boolean {
+  if (changeType === "new") {
+    return side === "new";
+  }
+
+  if (changeType === "deleted") {
+    return side === "old";
+  }
+
+  return true;
+}
 
 export interface FileSourceFetcher {
   /** Stable identity for source state not already represented by the file's patch. */

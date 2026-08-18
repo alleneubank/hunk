@@ -25,6 +25,7 @@ import { experimentalFeatureEnabled, resolveExperimentalDiffFiles } from "../cor
 import { DEFAULT_TAB_WIDTH } from "../core/run/tabWidth";
 import { isVcsReviewInput } from "../core/vcs";
 import type { AppBootstrap } from "../core/bootstrap";
+import { resolveReviewStoreRepoRoot } from "../core/reviewStore";
 import type { CliInput, CursorLine, LayoutMode } from "../core/run/commandInputs";
 import type { UserNoteLineTarget } from "../core/liveComments";
 import { canReloadInput } from "../core/run/inputReload";
@@ -77,6 +78,7 @@ import { useAppKeyboardShortcuts } from "./hooks/useAppKeyboardShortcuts";
 import { useExtensionDialogController } from "./hooks/useExtensionDialogController";
 import { useExtensionNotifications } from "./hooks/useExtensionNotifications";
 import { useHunkSessionBridge } from "./hooks/useHunkSessionBridge";
+import { useViewedStatePersistence } from "./hooks/useViewedStatePersistence";
 import { useMenuController } from "./hooks/useMenuController";
 import {
   useTerminalReview,
@@ -343,6 +345,7 @@ export function App({
     minSize: number;
   } | null>(null);
   const [sessionNoticeText, setSessionNoticeText] = useState<string | null>(null);
+  const [viewedFileIds, setViewedFileIds] = useState<ReadonlySet<string>>(() => new Set());
   const sessionNoticeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const extensions = bootstrap.extensions as ExtensionLoadResult | undefined;
   const sessionPanes = useMemo(() => buildSessionPanes(extensions), [extensions]);
@@ -467,6 +470,24 @@ export function App({
       : path;
   }, [bootstrap.viewPreferencesConfigPath]);
   const filteredFiles = review.visibleFiles;
+  const reviewRepoRoot = resolveReviewStoreRepoRoot(bootstrap);
+  useViewedStatePersistence({
+    repoRoot: reviewRepoRoot,
+    files: review.allFiles,
+    viewedFileIds,
+    replaceViewedFileIds: setViewedFileIds,
+  });
+  const setFileViewed = useCallback((fileId: string, viewed: boolean) => {
+    setViewedFileIds((current) => {
+      const next = new Set(current);
+      if (viewed) {
+        next.add(fileId);
+      } else {
+        next.delete(fileId);
+      }
+      return next;
+    });
+  }, []);
   const selectedFile = review.selectedFile;
   const selectedHunkIndex = review.selectedHunkIndex;
   const selectedFileId = selectedFile?.id ?? null;
@@ -1329,7 +1350,10 @@ export function App({
     selectedFile,
     selectedHunk: review.selectedHunk,
     selectedHunkIndex,
+    setFileViewed,
     showAgentNotes,
+    files: review.allFiles,
+    viewedFileIds,
   });
   const maxVisibleLineNumber = useMemo(
     () =>

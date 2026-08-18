@@ -1,0 +1,281 @@
+{
+  "name": "hunk-vscode",
+  "displayName": "Hunk Review",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local PR review in VS Code, backed by Hunk's changeset model and agent notes.",
+  "categories": [
+    "SCM Providers"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/alleneubank/hunk.git",
+    "directory": "editors/vscode"
+  },
+  "publisher": "hunk",
+  "main": "./out/extension.js",
+  "scripts": {
+    "compile": "tsc -p ./",
+    "typecheck": "tsc -p ./ --noEmit",
+    "test": "tsc -p ./ && vscode-test",
+    "package": "vsce package --no-dependencies --allow-missing-repository",
+    "vscode:prepublish": "tsc -p ./"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.10",
+    "@types/node": "^25.5.0",
+    "@types/vscode": "^1.90.0",
+    "@vscode/test-cli": "^0.0.15",
+    "@vscode/test-electron": "^3.1.0",
+    "typescript": "^5.9.3"
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "hunkReview.openReview",
+        "title": "Hunk: Open Review",
+        "icon": "$(play)"
+      },
+      {
+        "command": "hunkReview.refresh",
+        "title": "Hunk: Refresh Review",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "hunkReview.openFile",
+        "title": "Hunk: Open File Diff"
+      },
+      {
+        "command": "hunkReview.selectTarget",
+        "title": "Hunk: Select Review Target",
+        "icon": "$(git-compare)"
+      },
+      {
+        "command": "hunkReview.viewAsTree",
+        "title": "Hunk: View as Tree",
+        "icon": "$(list-tree)"
+      },
+      {
+        "command": "hunkReview.viewAsList",
+        "title": "Hunk: View as List",
+        "icon": "$(list-flat)"
+      },
+      {
+        "command": "hunkReview.filter",
+        "title": "Hunk: Filter Review",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "hunkReview.showAllFiles",
+        "title": "Hunk: Show All Files"
+      },
+      {
+        "command": "hunkReview.nextUnviewed",
+        "title": "Hunk: Next Unviewed File",
+        "icon": "$(arrow-down)"
+      },
+      {
+        "command": "hunkReview.previousUnviewed",
+        "title": "Hunk: Previous Unviewed File",
+        "icon": "$(arrow-up)"
+      },
+      {
+        "command": "hunkReview.toggleViewed",
+        "title": "Hunk: Toggle Viewed",
+        "icon": "$(check)"
+      },
+      {
+        "command": "hunkReview.markFolderViewed",
+        "title": "Mark Folder Viewed",
+        "icon": "$(check-all)"
+      },
+      {
+        "command": "hunkReview.markFolderUnviewed",
+        "title": "Mark Folder Unviewed"
+      },
+      {
+        "command": "hunkReview.markAllViewed",
+        "title": "Hunk: Mark All Viewed"
+      },
+      {
+        "command": "hunkReview.markAllUnviewed",
+        "title": "Hunk: Mark All Unviewed"
+      },
+      {
+        "command": "hunkReview.addComment",
+        "title": "Hunk: Add Review Comment"
+      },
+      {
+        "command": "hunkReview.resolveComment",
+        "title": "Resolve",
+        "icon": "$(check)"
+      },
+      {
+        "command": "hunkReview.unresolveComment",
+        "title": "Reopen",
+        "icon": "$(discard)"
+      },
+      {
+        "command": "hunkReview.deleteComment",
+        "title": "Delete",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "hunkReview.followFocus",
+        "title": "Hunk: Follow Agent Focus"
+      }
+    ],
+    "configuration": {
+      "title": "Hunk Review",
+      "properties": {
+        "hunkReview.binaryPath": {
+          "type": "string",
+          "default": "",
+          "description": "Full path to the `hunk` binary. Leave empty to use a repo-local install, then PATH."
+        }
+      }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "hunk-review",
+          "title": "Hunk Review",
+          "icon": "$(diff)"
+        }
+      ]
+    },
+    "views": {
+      "hunk-review": [
+        {
+          "id": "hunkReview.summary",
+          "name": "Summary",
+          "type": "webview",
+          "when": "hunkReview.hasSummary"
+        },
+        {
+          "id": "hunkReview.files",
+          "name": "Files",
+          "contextualTitle": "Hunk Review"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "hunkReview.openReview",
+          "when": "view == hunkReview.files",
+          "group": "navigation@1"
+        },
+        {
+          "command": "hunkReview.selectTarget",
+          "when": "view == hunkReview.files",
+          "group": "navigation@2"
+        },
+        {
+          "command": "hunkReview.refresh",
+          "when": "view == hunkReview.files",
+          "group": "navigation@3"
+        },
+        {
+          "command": "hunkReview.viewAsTree",
+          "when": "view == hunkReview.files && hunkReview.viewMode == list",
+          "group": "navigation@4"
+        },
+        {
+          "command": "hunkReview.viewAsList",
+          "when": "view == hunkReview.files && hunkReview.viewMode == tree",
+          "group": "navigation@4"
+        },
+        {
+          "command": "hunkReview.filter",
+          "when": "view == hunkReview.files",
+          "group": "navigation@5"
+        },
+        {
+          "command": "hunkReview.markAllViewed",
+          "when": "view == hunkReview.files",
+          "group": "1_mark@1"
+        },
+        {
+          "command": "hunkReview.markAllUnviewed",
+          "when": "view == hunkReview.files",
+          "group": "1_mark@2"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "hunkReview.toggleViewed",
+          "when": "view == hunkReview.files && viewItem =~ /^hunkFile\\./",
+          "group": "inline"
+        },
+        {
+          "command": "hunkReview.markFolderViewed",
+          "when": "view == hunkReview.files && viewItem == hunkDirectory",
+          "group": "inline"
+        },
+        {
+          "command": "hunkReview.markFolderUnviewed",
+          "when": "view == hunkReview.files && viewItem == hunkDirectory",
+          "group": "1_mark@1"
+        }
+      ],
+      "comments/commentThread/context": [
+        {
+          "command": "hunkReview.addComment",
+          "group": "inline"
+        }
+      ],
+      "comments/comment/title": [
+        {
+          "command": "hunkReview.resolveComment",
+          "when": "commentController == hunkReview && comment =~ /^(root|note)-active$/"
+        },
+        {
+          "command": "hunkReview.unresolveComment",
+          "when": "commentController == hunkReview && comment =~ /^(root|note)-resolved$/"
+        },
+        {
+          "command": "hunkReview.deleteComment",
+          "when": "commentController == hunkReview && comment =~ /^(root-active|root-resolved|reply)$/"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "hunkReview.nextUnviewed",
+        "key": "alt+]",
+        "when": "hunkReview.reviewOpen"
+      },
+      {
+        "command": "hunkReview.previousUnviewed",
+        "key": "alt+[",
+        "when": "hunkReview.reviewOpen"
+      }
+    ],
+    "viewsWelcome": [
+      {
+        "view": "hunkReview.files",
+        "contents": "Review a changeset with Hunk. Agent notes appear beside the code they explain, and your comments persist in the repository.\n[Open Review](command:hunkReview.openReview)\n[Choose what to review](command:hunkReview.selectTarget)",
+        "when": "!hunkReview.reviewOpen"
+      },
+      {
+        "view": "hunkReview.files",
+        "contents": "This target has no changes to review.\n[Choose what to review](command:hunkReview.selectTarget)\n[Refresh](command:hunkReview.refresh)",
+        "when": "hunkReview.reviewOpen && hunkReview.empty == no-changes"
+      },
+      {
+        "view": "hunkReview.files",
+        "contents": "No files in this review match the current filter. The review itself is unchanged.\n[Show all files](command:hunkReview.showAllFiles)",
+        "when": "hunkReview.reviewOpen && hunkReview.empty == filtered"
+      }
+    ]
+  },
+  "activationEvents": [
+    "onView:hunkReview.files"
+  ],
+  "engines": {
+    "node": ">=18",
+    "vscode": "^1.90.0"
+  }
+}

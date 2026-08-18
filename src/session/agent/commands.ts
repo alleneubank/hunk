@@ -30,6 +30,7 @@ import {
   formatRemoveCommentOutput,
   formatReviewOutput,
   formatSessionOutput,
+  formatViewedOutput,
   stringifyJson,
   type HunkSessionCliClient,
 } from "./cliClient";
@@ -42,6 +43,7 @@ const REQUIRED_ACTION_BY_COMMAND: Record<SessionCommandInput["action"], SessionD
   context: "context",
   review: "review",
   navigate: "navigate",
+  "viewed-set": "viewed-set",
   reload: "reload",
   "comment-add": "comment-add",
   "comment-apply": "comment-apply",
@@ -216,6 +218,18 @@ export async function runSessionCommand(input: SessionCommandInput) {
       });
       return renderOutput(input.output, { result }, () =>
         formatNavigationOutput(input.selector, result),
+      );
+    }
+    case "viewed-set": {
+      if (!client.setViewed) {
+        throw new Error("The Hunk session daemon client does not support viewed-state updates.");
+      }
+      const result = await client.setViewed({
+        ...input,
+        selector: normalizedSelector!,
+      });
+      return renderOutput(input.output, { result }, () =>
+        formatViewedOutput(input.selector, result),
       );
     }
     case "reload": {
