@@ -192,6 +192,81 @@ ReviewIntent + caller facts -> planReviewIntent -> ReviewAction[] -> reducer -> 
 - Never push a release tag or trigger publishing without explicit user confirmation.
 - `hunk.dev/changelog` is generated from `CHANGELOG.md` by `bun run generate:changelog`; hand-author only `website/releases/notes.json`, and never edit its output. `docs/changelog-on-hunk-dev.md` explains how release dates and the pre-tag window work.
 
+## fork dogfood releases (alleneubank/hunk)
+
+This section is fork-only guidance. Upstream agents can ignore it.
+
+Ship model: **local build + GitHub prerelease tarballs** (mise `github:` / Nix overlays). Not Actions. See
+https://gist.github.com/alleneubank/bf7d25542a49b136671db0e4bb65226d
+
+- **Remote layout:** `origin` = personal fork (`alleneubank/hunk`), `upstream` = `modem-dev/hunk`.
+  `git fetch origin` is **not** an upstream sync here.
+- **Clean PR set:** `main` mirrors what you intend to upstream. Release plumbing lives on `fork` =
+  `main` + one `[fork]` commit (`scripts/release-fork.ts`, this AGENTS section). Never let
+  distribution-only edits leak into a commit bound for an upstream PR.
+- **Commit tagging:** two kinds, distinguished by a `[fork]` marker. The test: _would this
+  commit go in an upstream PR?_ yes → no marker; no → `[fork]`.
+  - Upstream-bound work is a conventional subject (`feat(review): …`) with no marker.
+  - Fork-only work (release script, this SOP, the dogfood version stamp) is tagged `[fork]`.
+  - **Amend, don't accrete.** Iterating on an unmerged feature rewrites the existing `feat`
+    commit — never stack `fix:` commits for your own WIP.
+  - **`fix` is for a real patch to already-merged upstream code**, not for iterating on your
+    own unreviewed feature.
+  - **`main` is mostly `feat`.** Everything that is not an upstream PR lives on `fork`.
+- **Version:** `<base>-fork.<YYYYMMDD>.g<sha9>` (UTC date; `g` + 9-char sha). Tag `v…`. Always
+  **prerelease** so `/releases/latest` never hijacks upstream trackers.
+  - `<base>` is the nearest plain upstream release (`vX.Y.Z`). Do **not** use
+    `git describe --tags --abbrev=0` — once `-fork` tags accumulate it matches those and
+    the version doubles (`0.18.0-fork.…gabc-fork.…gdef`). Filter:
+    ```bash
+    git tag --list 'v*' --sort=-v:refname --format='%(refname:short)' \
+      | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1 | sed 's/^v//'
+    ```
+  - The release script reads `package.json` from `--base` (default `main`) and strips any
+    existing `-fork.*` suffix. That field must match the nearest plain upstream tag. Stamp
+    the version only on the `fork` branch / in the shipped artifact — never on `main`.
+- **Tarballs (required matrix):** host platform **plus** `hunkdiff-linux-x64` (Docker
+  `linux/amd64` when cutting from a Mac). Host-only is a defective fleet cut. Each archive is
+  `hunkdiff-<os>-<arch>.tar.gz` with `hunk`, `skills/`, `metadata.json` at the **archive root**
+  (a wrapper directory collides with mise `exe=`), plus `checksums.txt` (`shasum -a 256`).
+  Platform identity is asserted with `file(1)` before tar.
+- **One command owns the cut:**
+  ```bash
+  bun run scripts/release-fork.ts                 # dry run
+  bun run scripts/release-fork.ts --run           # rebuild fork, stamp, tag, package (no remote)
+  bun run scripts/release-fork.ts --run --publish # BOUNDARY: push + gh release create --prerelease
+  bun run scripts/release-fork.ts --republish --publish  # rebuild/upload assets for today's tag
+  ```
+- **Refuse dirty trees.** The tag must reproduce the artifact.
+- **Publish is the human boundary.** Dry-run by default; `--publish` pushes the branch/tag and
+  runs `gh release create --prerelease` with the local tarball. Do not rely on tag-triggered CI
+  for fork dogfood assets.
+- **Sync loop** (agent-runnable; remotes are hunk-specific — `upstream` is modem-dev):
+  1. Backup, then sync `main` onto upstream:
+     ```bash
+     git fetch upstream
+     git checkout main
+     git tag -a main-rebase-backup-$(date -u +%Y%m%d-%H%M%S) -m 'backup before upstream rebase'
+     git rebase --update-refs upstream/main
+     ```
+     Resolve conflicts only in files this fork changed; a conflict in an untouched file means
+     abort and report, not guess.
+  2. Replay the fork branch onto the new tip: `git rebase --onto main <old-main-tip> fork`.
+     (`scripts/release-fork.ts --run` also rebuilds `fork` = `main` + one `[fork]` commit.)
+  3. Push with `--force-with-lease` (never plain `--force`). `main` and `fork` on `origin`
+     are proposal refs on this single-author fork, not a publish.
+  4. Cut the release (dry-run first; `--publish` is the boundary), then pin + lock:
+     ```toml
+     "github:alleneubank/hunk" = { version = "<base>-fork.<YYYYMMDD>.g<sha9>", exe = "hunk" }
+     ```
+     Run `mise lock` from any host — it must resolve **all** fleet platform sections, not
+     collapse to the lock host. Keep a stray `npm:` / brew shim off PATH so it cannot shadow
+     the mise binary. Nix overlays pin the same tag via `fetchurl` + sha256 from `checksums.txt`.
+  5. Before every commit, ask "upstream or fork?" and tag accordingly.
+- **After a release ships:** pin the version in dotfiles/mise + `mise lock`; install/reinstall the
+  VS Code extension VSIX on dogfood hosts (`code --install-extension editors/vscode/hunk-vscode-*.vsix`).
+  CLI comes from mise/GitHub release assets, not the VSIX.
+
 ## repo notes
 
 - Local review artifacts are ignored on purpose. Leave them alone unless the user explicitly wants them updated, and do not commit them.
@@ -199,4 +274,4 @@ ReviewIntent + caller facts -> planReviewIntent -> ReviewAction[] -> reducer -> 
 
 ## commits
 
-Commit titles should follow Conventional Commits. Format: `<type>[scope]: <description>`. Common types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`, `ci`, `build`. Use `!` or `BREAKING CHANGE:` footer for breaking changes. Description should explain the "why", not just the "what".
+Commit titles should follow Conventional Commits. Format: `<type>[scope]: <description>`. Common types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`, `ci`, `build`. Use `!` or `BREAKING CHANGE:` footer for breaking changes. Description should explain the "why", not just the "what". Fork-only commits on the `fork` branch carry a `[fork]` marker — see **fork dogfood releases**.
