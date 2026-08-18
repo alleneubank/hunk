@@ -1,4 +1,5 @@
 import * as assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -137,11 +138,16 @@ suite("end to end against the real hunk binary", function () {
     git("commit", "-m", "initial");
     writeFileSync(join(workspaceRoot, "alpha.ts"), "export const alpha = 10;\n");
 
-    // A real sidecar, so the run proves agent rationale survives the whole path from
-    // `.hunk/agent-context.json` to a read-only thread in the editor.
+    // Keyed conventional sidecar only — bare `.hunk/agent-context.json` is never
+    // auto-loaded. The target is a working-tree review with no pathspecs, matching
+    // `conventionalAgentContextPath` / `canonicalizeAgentContextTarget`.
     mkdirSync(join(workspaceRoot, ".hunk"), { recursive: true });
+    const workingTreeTargetId = createHash("sha256")
+      .update(["working-tree", ""].join("\0"))
+      .digest("hex")
+      .slice(0, 12);
     writeFileSync(
-      join(workspaceRoot, ".hunk", "agent-context.json"),
+      join(workspaceRoot, ".hunk", `agent-context.${workingTreeTargetId}.json`),
       JSON.stringify({
         summary: "one-line changeset summary",
         files: [
