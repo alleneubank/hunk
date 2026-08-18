@@ -300,11 +300,16 @@ export function createGitVcsAdapter({
             cwd,
             gitExecutable,
           );
+          const endpoints = resolveGitDiffEndpoints(input, { cwd, repoRoot, gitExecutable });
 
           return {
             repoRoot,
             sourceLabel: repoRoot,
             title,
+            sourceCapabilities: {
+              old: "hunk" as const,
+              new: endpoints?.new.kind === "worktree" ? ("workspace" as const) : ("hunk" as const),
+            },
             patchText: runGitText({
               input,
               args: buildGitDiffArgs(
@@ -372,6 +377,7 @@ export function createGitVcsAdapter({
             repoRoot,
             sourceLabel: repoRoot,
             title: input.ref ? `${repoName} show ${input.ref}` : `${repoName} show HEAD`,
+            sourceCapabilities: { old: "hunk" as const, new: "hunk" as const },
             patchText: runGitText({
               input,
               args: buildGitShowArgs(
@@ -412,6 +418,7 @@ export function createGitVcsAdapter({
             repoRoot,
             sourceLabel: repoRoot,
             title: input.ref ? `${repoName} stash ${input.ref}` : `${repoName} stash`,
+            sourceCapabilities: { old: "hunk" as const, new: "hunk" as const },
             patchText: runGitText({
               input,
               args: buildGitStashShowArgs(

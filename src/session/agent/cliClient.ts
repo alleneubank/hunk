@@ -25,6 +25,7 @@ import type {
   SessionLiveCommentSummary,
   SessionReview,
   SessionReviewNoteSummary,
+  SetViewedResult,
 } from "../types";
 import type {
   SessionCommentAddCommandInput,
@@ -38,6 +39,7 @@ import type {
   SessionReloadCommandInput,
   SessionReviewCommandInput,
   SessionSelectorInput,
+  SessionViewedSetCommandInput,
 } from "../../core/run/commandInputs";
 import { describeSessionSelector } from "@hunk/session-broker-core";
 
@@ -48,6 +50,7 @@ export interface HunkSessionCliClient {
   getSelectedContext(selector: SessionSelectorInput): Promise<SelectedSessionContext>;
   getSessionReview(input: SessionReviewCommandInput): Promise<SessionReview>;
   navigateToHunk(input: SessionNavigateCommandInput): Promise<NavigatedSelectionResult>;
+  setViewed?(input: SessionViewedSetCommandInput): Promise<SetViewedResult>;
   reloadSession(input: SessionReloadCommandInput): Promise<ReloadedSessionResult>;
   addComment(input: SessionCommentAddCommandInput): Promise<AppliedCommentResult>;
   applyComments(input: SessionCommentApplyCommandInput): Promise<AppliedCommentBatchResult>;
@@ -140,6 +143,17 @@ class HttpHunkSessionCliClient implements HunkSessionCliClient {
         side: input.side,
         line: input.line,
         commentDirection: input.commentDirection,
+      })
+    ).result;
+  }
+
+  async setViewed(input: SessionViewedSetCommandInput) {
+    return (
+      await this.request<{ result: SetViewedResult }>({
+        action: "viewed-set",
+        selector: input.selector,
+        filePath: input.filePath,
+        viewed: input.viewed,
       })
     ).result;
   }
@@ -463,6 +477,11 @@ export function formatNavigationOutput(
   }
 
   return `Focused ${formatSessionPath(result.filePath)} hunk ${result.hunkIndex + 1} in ${formatSessionSelector(selector)}.\n`;
+}
+
+export function formatViewedOutput(selector: SessionSelectorInput, result: SetViewedResult) {
+  const action = result.viewed ? "Marked" : "Unmarked";
+  return `${action} ${result.filePath} viewed in ${describeSessionSelector(selector)}; viewed ${result.viewedFileCount}/${result.totalFileCount}.\n`;
 }
 
 export function formatReloadOutput(selector: SessionSelectorInput, result: ReloadedSessionResult) {

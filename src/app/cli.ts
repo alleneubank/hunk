@@ -44,6 +44,7 @@ import {
 } from "../session/agent/errors";
 import { DEFAULT_TAB_WIDTH, parseTabWidth } from "../core/run/tabWidth";
 import { resolveCliVersion } from "../core/run/version";
+import { parseReviewCommand } from "./reviewCli";
 
 /** Structured option metadata shared by Commander registration and generated CLI docs. */
 export interface CliReferenceOption {
@@ -77,6 +78,7 @@ export const COMMON_REVIEW_OPTIONS = [
   },
   { flag: "--theme <theme>", description: "named theme override" },
   AUXILIARY_AGENT_OPTIONS.agentContext,
+  AUXILIARY_AGENT_OPTIONS.noAgentContext,
   { flag: "--pager", description: "use pager-style chrome" },
   AUXILIARY_AGENT_OPTIONS.experimental,
   {
@@ -234,6 +236,65 @@ export const CLI_REFERENCE_COMMANDS = {
     synopsis: ["hunk extension remove <name>"],
     aliases: ["hunk ext remove"],
   },
+  review: {
+    path: "review",
+    summary: "drive a repo-local review headlessly, for an editor client",
+    synopsis: [
+      "hunk review export [target] [-- <pathspec...>] --json",
+      "hunk review comment add --file <path> --side <old|new> --line <n> --body <text> --json",
+      "hunk review comment reply --file <path> --id <id> --body <text> --json",
+      "hunk review comment status --file <path> --id <id> --status <active|resolved> --json",
+      "hunk review comment delete --file <path> --id <id> --json",
+      "hunk review note reply --file <path> --note <id> --body <text> --json",
+      "hunk review note status --file <path> --note <id> --status <active|resolved> --json",
+      "hunk review viewed set --file <path> [--file <path>...] (--viewed | --unviewed) --json",
+      "hunk review file source --file <path> --side <old|new> --json",
+      "hunk review focus set [target] [--file <path> [--side <old|new>] [--line <n>]] --json",
+      "hunk review focus get --json",
+      "hunk review focus clear --json",
+    ],
+    options: [
+      ...DIFF_OPTIONS,
+      { flag: "--json", description: "emit structured JSON (the only supported format)" },
+      {
+        flag: "--source <source>",
+        description: "repo-backed source: diff, show, or stash-show (default: diff)",
+      },
+      { flag: "--include-patch", description: "export: include raw unified patch text per file" },
+      {
+        flag: "--repo <path>",
+        description: "repo root to operate on instead of the current directory",
+      },
+      {
+        flag: "--file <path>",
+        description:
+          "repo-relative file the operation targets; repeatable for `viewed set`, which applies them in one write",
+      },
+      {
+        flag: "--side <side>",
+        description: "comment add / file source: `old` or `new` diff side",
+      },
+      { flag: "--line <n>", description: "comment add: line number on that side" },
+      { flag: "--body <text>", description: "comment add/reply: comment body" },
+      { flag: "--stdin", description: "comment add/reply: read the body from stdin instead" },
+      { flag: "--author <name>", description: "comment add/reply: author recorded on the comment" },
+      {
+        flag: "--id <id>",
+        description:
+          "comment reply/status/delete: the comment id; for `reply`, the comment being answered",
+      },
+      {
+        flag: "--note <id>",
+        description: "note reply/status: the agent note id, as the current review reports it",
+      },
+      {
+        flag: "--status <status>",
+        description: "comment status / note status: `active` or `resolved`",
+      },
+      { flag: "--viewed", description: "viewed set: mark the named files viewed" },
+      { flag: "--unviewed", description: "viewed set: mark the named files unviewed" },
+    ],
+  },
   "daemon-serve": {
     path: "daemon serve",
     summary: "run the local Hunk session daemon and websocket session broker",
@@ -335,6 +396,7 @@ function buildCommonOptions(
     cursorLine: options.cursorLine,
     theme: options.theme,
     agentContext: options.agentContext,
+    noAgentContext: argv.includes("--no-agent-context") ? true : undefined,
     pager: options.pager ? true : undefined,
     watch: options.watch ? true : undefined,
     experimental:
@@ -876,7 +938,8 @@ function requireReloadableCliInput(input: ParsedCliInput): CliInput {
     input.kind === "daemon-serve" ||
     input.kind === "markup-render" ||
     input.kind === "markup-guide" ||
-    input.kind === "extension-manage"
+    input.kind === "extension-manage" ||
+    input.kind === "review"
   ) {
     throw new Error(
       "Session reload requires a Hunk review command after --, such as `diff` or `show`.",
@@ -1081,6 +1144,38 @@ async function parseSessionCommand(tokens: string[]): Promise<ParsedCliInput> {
             ? "new"
             : undefined,
       line: parsedOptions.oldLine ?? parsedOptions.newLine,
+    };
+  }
+
+  if (subcommand === "viewed") {
+    const command = buildSessionCommand(SESSION_AGENT_COMMANDS["viewed-set"]);
+
+    let parsedSessionId: string | undefined;
+    let parsedOptions: SessionCommandOptions<"viewed-set"> = { file: "" };
+
+    command.action(
+      (sessionId: string | undefined, options: SessionCommandOptions<"viewed-set">) => {
+        parsedSessionId = sessionId;
+        parsedOptions = options;
+      },
+    );
+
+    if (rest.includes("--help") || rest.includes("-h")) {
+      return sessionCommandHelpText(command, SESSION_AGENT_COMMANDS["viewed-set"]);
+    }
+
+    await parseStandaloneCommand(command, rest);
+    if (!parsedOptions.file) {
+      throw new Error("Specify --file <path>.");
+    }
+
+    return {
+      kind: "session",
+      action: "viewed-set",
+      output: resolveJsonOutput(parsedOptions),
+      selector: resolveExplicitSessionSelector(parsedSessionId, parsedOptions.repo),
+      filePath: parsedOptions.file,
+      viewed: !parsedOptions.unset,
     };
   }
 
@@ -1728,7 +1823,15 @@ async function parseStashCommand(tokens: string[], argv: string[]): Promise<Pars
   };
 }
 
-const REVIEW_COMMAND_NAMES = new Set(["diff", "show", "patch", "pager", "difftool", "stash"]);
+const REVIEW_COMMAND_NAMES = new Set([
+  "diff",
+  "show",
+  "patch",
+  "pager",
+  "difftool",
+  "stash",
+  "review",
+]);
 const TOP_LEVEL_COMMAND_NAMES = new Set([
   ...REVIEW_COMMAND_NAMES,
   "session",
@@ -1799,6 +1902,13 @@ export async function parseCli(argv: string[]): Promise<ParsedCliInput> {
       return parseDifftoolCommand(rest, argv);
     case "stash":
       return parseStashCommand(rest, argv);
+    case "review":
+      return parseReviewCommand(rest, argv, {
+        parseDiffCommand,
+        parseShowCommand,
+        parseStashCommand,
+        helpText: () => `${createCliReferenceCommand("review").helpInformation().trimEnd()}\n`,
+      });
     case "session":
       return parseSessionCommand(rest);
     case "markup":

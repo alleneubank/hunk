@@ -25,7 +25,8 @@
   },
   "workspaces": [
     ".",
-    "packages/*"
+    "packages/*",
+    "editors/*"
   ],
   "files": [
     "bin",

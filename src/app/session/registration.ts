@@ -60,6 +60,8 @@ function buildSessionFiles(publication: ReviewPublication): SessionReviewFile[] 
     additions: file.stats.additions,
     deletions: file.stats.deletions,
     hunkCount: file.hunks.length,
+    changeType: file.changeKind,
+    agentSummary: file.agentSummary,
     // The same derivation the extension API's file views use, so the two
     // external views of a review never disagree on a hunk's header or spans.
     hunks: file.hunks.map((hunk, index) => summarizeHunk(hunk, index)),
@@ -97,6 +99,7 @@ export function createSessionRegistration(
       title: bootstrap.changeset.title,
       sourceLabel: bootstrap.changeset.sourceLabel,
       experimentalFeatures: resolveExperimentalFeatures(bootstrap.input.options),
+      agentSummary: bootstrap.changeset.agentSummary,
       files: buildSessionFiles(publication),
       reviewCatalog: buildReviewCatalog(publication),
       // The verifier, not the secret: the daemon can check a presented capability and can
@@ -121,6 +124,7 @@ export function updateSessionRegistration(
       title: bootstrap.changeset.title,
       sourceLabel: bootstrap.changeset.sourceLabel,
       experimentalFeatures: resolveExperimentalFeatures(bootstrap.input.options),
+      agentSummary: bootstrap.changeset.agentSummary,
       files: buildSessionFiles(publication),
       reviewCatalog: buildReviewCatalog(publication),
       // The verifier, not the secret: the daemon can check a presented capability and can

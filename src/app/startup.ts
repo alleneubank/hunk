@@ -18,6 +18,7 @@ import type {
   ExtensionManageCommandInput,
   MarkupRenderCommandInput,
   ParsedCliInput,
+  ReviewCommandInput,
   SessionCommandInput,
 } from "../core/run/commandInputs";
 import { canReloadInput } from "../core/run/inputReload";
@@ -74,6 +75,10 @@ export type StartupPlan =
     }
   | {
       kind: "markup-guide";
+    }
+  | {
+      kind: "review-command";
+      input: ReviewCommandInput;
     }
   | {
       kind: "extension-manage";
@@ -182,6 +187,13 @@ export async function prepareStartupPlan(
   if (parsedCliInput.kind === "extension-manage") {
     return {
       kind: "extension-manage",
+      input: parsedCliInput,
+    };
+  }
+
+  if (parsedCliInput.kind === "review") {
+    return {
+      kind: "review-command",
       input: parsedCliInput,
     };
   }

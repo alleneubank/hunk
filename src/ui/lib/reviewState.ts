@@ -98,6 +98,45 @@ export function buildSelectedHunkSummary(file: DiffFile, hunkIndex: number): Sel
       };
 }
 
+/** Find the next or previous unviewed file in the current visible review stream. */
+export function findNextUnviewedFile(
+  visibleFiles: DiffFile[],
+  viewedFileIds: ReadonlySet<string>,
+  currentFileId: string | undefined,
+  delta: number,
+): DiffFile | null {
+  const unviewedFiles = visibleFiles.filter((file) => !viewedFileIds.has(file.id));
+  if (unviewedFiles.length === 0) {
+    return null;
+  }
+
+  const currentUnviewedIndex = unviewedFiles.findIndex((file) => file.id === currentFileId);
+  if (currentUnviewedIndex >= 0) {
+    const nextIndex =
+      (((currentUnviewedIndex + delta) % unviewedFiles.length) + unviewedFiles.length) %
+      unviewedFiles.length;
+    return unviewedFiles[nextIndex] ?? null;
+  }
+
+  const currentVisibleIndex = visibleFiles.findIndex((file) => file.id === currentFileId);
+  if (currentVisibleIndex < 0) {
+    return unviewedFiles[0] ?? null;
+  }
+
+  const direction = delta < 0 ? -1 : 1;
+  for (let offset = 1; offset <= visibleFiles.length; offset += 1) {
+    const candidateIndex =
+      (((currentVisibleIndex + direction * offset) % visibleFiles.length) + visibleFiles.length) %
+      visibleFiles.length;
+    const candidate = visibleFiles[candidateIndex];
+    if (candidate && !viewedFileIds.has(candidate.id)) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
 /**
  * Resolve one absolute session-daemon navigation request against the review stream.
  *

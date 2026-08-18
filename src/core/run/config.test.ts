@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
+import { loadSidecarContext } from "../changeset/sidecar";
 import { getBundledVcsCatalog } from "../../app/vcsCatalog";
 import type { CliInput } from "./commandInputs";
 import {
@@ -162,7 +163,170 @@ describe("config persistence", () => {
   });
 });
 
+function createVcsInput(overrides: Partial<CliInput["options"]> = {}): CliInput {
+  return { kind: "vcs", staged: false, options: { ...overrides } };
+}
+
+const bundledCatalog = { vcsCatalog: getBundledVcsCatalog() };
+
 describe("config resolution", () => {
+  test("auto-discovers the target-keyed conventional agent context path in a repo", () => {
+    const home = createTempDir("hunk-config-home-");
+    const repo = createTempDir("hunk-config-repo-");
+    createRepo(repo);
+
+    const resolved = resolveConfiguredCliInput(createVcsInput(), {
+      cwd: repo,
+      env: { HOME: home },
+      ...bundledCatalog,
+    });
+
+    const path = resolved.input.options.agentContext;
+    expect(path).toMatch(
+      new RegExp(
+        `${repo.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/\\.hunk/agent-context\\.[0-9a-f]{12}\\.json$`,
+      ),
+    );
+    expect(path).not.toBe(join(repo, ".hunk", "agent-context.json"));
+    expect(resolved.input.options.agentContextOptional).toBe(true);
+  });
+
+  test("conventional discovery for a range does not use the working-tree sidecar path", () => {
+    const home = createTempDir("hunk-config-home-");
+    const repo = createTempDir("hunk-config-repo-");
+    createRepo(repo);
+
+    const workingTree = resolveConfiguredCliInput(createVcsInput(), {
+      cwd: repo,
+      env: { HOME: home },
+      ...bundledCatalog,
+    });
+    const range = resolveConfiguredCliInput(
+      { kind: "vcs", staged: false, range: "main...HEAD", options: {} },
+      { cwd: repo, env: { HOME: home }, ...bundledCatalog },
+    );
+
+    expect(workingTree.input.options.agentContext).not.toBe(range.input.options.agentContext);
+    expect(range.input.options.agentContext).toContain("agent-context.");
+    expect(range.input.options.agentContextOptional).toBe(true);
+  });
+
+  test("keeps explicit CLI agent context strict and above conventional discovery", () => {
+    const home = createTempDir("hunk-config-home-");
+    const repo = createTempDir("hunk-config-repo-");
+    createRepo(repo);
+
+    const resolved = resolveConfiguredCliInput(createVcsInput({ agentContext: "explicit.json" }), {
+      cwd: repo,
+      env: { HOME: home },
+      ...bundledCatalog,
+    });
+
+    expect(resolved.input.options.agentContext).toBe("explicit.json");
+    expect(resolved.input.options.agentContextOptional).not.toBe(true);
+  });
+
+  test("resolves configured agent context against the repo root below CLI precedence", () => {
+    const home = createTempDir("hunk-config-home-");
+    const repo = createTempDir("hunk-config-repo-");
+    createRepo(repo);
+    mkdirSync(join(repo, ".hunk"), { recursive: true });
+    writeFileSync(join(repo, ".hunk", "config.toml"), 'agent_context = "notes/agent.json"\n');
+
+    const configured = resolveConfiguredCliInput(createVcsInput(), {
+      cwd: repo,
+      env: { HOME: home },
+      ...bundledCatalog,
+    });
+    const overridden = resolveConfiguredCliInput(
+      createVcsInput({ agentContext: "explicit.json" }),
+      {
+        cwd: repo,
+        env: { HOME: home },
+        ...bundledCatalog,
+      },
+    );
+
+    expect(configured.input.options.agentContext).toBe(resolve(repo, "notes/agent.json"));
+    expect(configured.input.options.agentContextOptional).not.toBe(true);
+    expect(overridden.input.options.agentContext).toBe("explicit.json");
+    expect(overridden.input.options.agentContextOptional).not.toBe(true);
+  });
+
+  test("no agent context opt-out disables config and conventional discovery", () => {
+    const home = createTempDir("hunk-config-home-");
+    const repo = createTempDir("hunk-config-repo-");
+    createRepo(repo);
+    mkdirSync(join(repo, ".hunk"), { recursive: true });
+    writeFileSync(join(repo, ".hunk", "config.toml"), 'agent_context = "notes/agent.json"\n');
+
+    const resolved = resolveConfiguredCliInput(createVcsInput({ noAgentContext: true }), {
+      cwd: repo,
+      env: { HOME: home },
+      ...bundledCatalog,
+    });
+
+    expect(resolved.input.options.agentContext).toBeUndefined();
+    expect(resolved.input.options.agentContextOptional).not.toBe(true);
+  });
+
+  test("re-resolves auto-discovered agent context idempotently for watch reloads", () => {
+    const home = createTempDir("hunk-config-home-");
+    const repo = createTempDir("hunk-config-repo-");
+    createRepo(repo);
+
+    const first = resolveConfiguredCliInput(createVcsInput(), {
+      cwd: repo,
+      env: { HOME: home },
+      ...bundledCatalog,
+    });
+    const second = resolveConfiguredCliInput(first.input, {
+      cwd: repo,
+      env: { HOME: home },
+      ...bundledCatalog,
+    });
+
+    expect(second.input.options.agentContext).toBe(first.input.options.agentContext);
+    expect(second.input.options.agentContext).toMatch(/agent-context\.[0-9a-f]{12}\.json$/);
+    expect(second.input.options.agentContextOptional).toBe(true);
+  });
+
+  test("optional load of the resolved keyed path succeeds when the file exists", async () => {
+    const home = createTempDir("hunk-config-home-");
+    const repo = createTempDir("hunk-config-repo-");
+    createRepo(repo);
+
+    const resolved = resolveConfiguredCliInput(createVcsInput(), {
+      cwd: repo,
+      env: { HOME: home },
+      ...bundledCatalog,
+    });
+    const keyedPath = resolved.input.options.agentContext;
+    expect(typeof keyedPath).toBe("string");
+    mkdirSync(join(repo, ".hunk"), { recursive: true });
+    writeFileSync(
+      keyedPath!,
+      JSON.stringify({
+        version: 1,
+        summary: "keyed notes",
+        files: [
+          {
+            path: "ghost.ts",
+            annotations: [{ summary: "note on a missing file", newRange: [1, 1] }],
+          },
+        ],
+      }),
+    );
+
+    const context = await loadSidecarContext(keyedPath, { optional: true });
+    expect(context?.summary).toBe("keyed notes");
+    expect(
+      await loadSidecarContext(join(repo, ".hunk", "agent-context.deadbeefcafe.json"), {
+        optional: true,
+      }),
+    ).toBeNull();
+  });
+
   test("merges global, repo, pager, command, and CLI overrides in the right order", () => {
     const home = createTempDir("hunk-config-home-");
     const repo = createTempDir("hunk-config-repo-");

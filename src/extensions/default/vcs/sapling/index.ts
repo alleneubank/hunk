@@ -87,6 +87,10 @@ export const SaplingVcsAdapter = {
           title: input.range ? `${repoName} ${input.range}` : `${repoName} working copy`,
           patchText: runSlText({ input, args: buildSlDiffArgs(input), cwd }),
           untrackedPaths: listSlUntrackedFiles(input, { cwd, repoRoot }),
+          sourceCapabilities: {
+            old: "hunk" as const,
+            new: input.range ? ("hunk" as const) : ("workspace" as const),
+          },
         };
       },
       watchSignature(input, { cwd }) {
@@ -108,6 +112,7 @@ export const SaplingVcsAdapter = {
           sourceLabel: repoRoot,
           title: `${repoName} show ${revset}`,
           patchText: runSlText({ input, args: buildSlShowArgs(input), cwd }),
+          sourceCapabilities: { old: "hunk" as const, new: "hunk" as const },
         };
       },
       watchSignature(input, { cwd }) {

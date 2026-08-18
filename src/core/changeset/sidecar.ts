@@ -12,6 +12,11 @@ import type { SidecarContext } from "./model";
 
 interface SidecarLoadOptions {
   cwd?: string;
+  /**
+   * Best-effort mode for zero-opt-in auto-discovery: any file, parse, or schema
+   * failure resolves to null so a stale conventional sidecar never breaks review.
+   */
+  optional?: boolean;
 }
 
 type AnnotationConfidence = NonNullable<AgentAnnotation["confidence"]>;
@@ -115,20 +120,8 @@ function normalizeAnnotationFile(file: unknown): AgentFileContext {
   };
 }
 
-/** Load the optional agent-context sidecar from a file path or stdin. */
-export async function loadSidecarContext(
-  pathOrDash?: string,
-  { cwd = process.cwd() }: SidecarLoadOptions = {},
-): Promise<SidecarContext | null> {
-  if (!pathOrDash) {
-    return null;
-  }
-
-  const raw =
-    pathOrDash === "-"
-      ? await new Response(Bun.stdin.stream()).text()
-      : await Bun.file(resolvePath(cwd, pathOrDash)).text();
-
+/** Parse and normalize raw sidecar JSON into the runtime model. */
+function parseSidecarContext(raw: string): SidecarContext {
   const parsed = JSON.parse(raw) as Record<string, unknown>;
 
   if (!parsed || typeof parsed !== "object") {
@@ -142,6 +135,32 @@ export async function loadSidecarContext(
     summary: typeof parsed.summary === "string" ? parsed.summary : undefined,
     files,
   };
+}
+
+/** Load the optional agent-context sidecar from a file path or stdin. */
+export async function loadSidecarContext(
+  pathOrDash?: string,
+  { cwd = process.cwd(), optional = false }: SidecarLoadOptions = {},
+): Promise<SidecarContext | null> {
+  if (!pathOrDash) {
+    return null;
+  }
+
+  if (pathOrDash === "-") {
+    const raw = await new Response(Bun.stdin.stream()).text();
+    return parseSidecarContext(raw);
+  }
+
+  try {
+    const raw = await Bun.file(resolvePath(cwd, pathOrDash)).text();
+    return parseSidecarContext(raw);
+  } catch (error) {
+    if (optional) {
+      return null;
+    }
+
+    throw error;
+  }
 }
 
 /** Match agent context to a diff file by current path first, then previous path for renames. */

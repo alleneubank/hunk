@@ -25,6 +25,14 @@ export interface CommonOptions {
   vcs?: VcsMode;
   theme?: string;
   agentContext?: string;
+  /** Explicit opt-out (`--no-agent-context`): disables sidecar loading and auto-discovery. */
+  noAgentContext?: boolean;
+  /**
+   * Internal marker: the resolved `agentContext` is the best-effort conventional
+   * `.hunk/agent-context.<targetId>.json` path for this review target, not an
+   * explicit user or config path.
+   */
+  agentContextOptional?: boolean;
   pager?: boolean;
   watch?: boolean;
   /** Enable launch-scoped experimental review features. */
@@ -258,6 +266,15 @@ export interface SessionHighlightClearCommandInput {
   filePath?: string;
 }
 
+export interface SessionViewedSetCommandInput {
+  kind: "session";
+  action: "viewed-set";
+  output: SessionCommandOutput;
+  selector: SessionSelectorInput;
+  filePath: string;
+  viewed: boolean;
+}
+
 export type SessionCommandInput =
   | SessionListCommandInput
   | SessionGetCommandInput
@@ -270,7 +287,8 @@ export type SessionCommandInput =
   | SessionCommentRemoveCommandInput
   | SessionCommentClearCommandInput
   | SessionHighlightAddCommandInput
-  | SessionHighlightClearCommandInput;
+  | SessionHighlightClearCommandInput
+  | SessionViewedSetCommandInput;
 
 export interface MarkupRenderCommandInput {
   kind: "markup-render";
@@ -284,6 +302,43 @@ export interface MarkupRenderCommandInput {
 
 export interface MarkupGuideCommandInput {
   kind: "markup-guide";
+}
+
+/** One headless operation over a repo-local review. */
+export type ReviewOperation =
+  | { name: "export"; includePatch: boolean }
+  | {
+      name: "comment-add";
+      file: string;
+      side: "old" | "new";
+      line: number;
+      body: string;
+      author?: string;
+    }
+  | { name: "comment-reply"; file: string; id: string; body: string; author?: string }
+  | { name: "note-reply"; file: string; note: string; body: string; author?: string }
+  | { name: "note-status"; file: string; note: string; status: "active" | "resolved" }
+  | { name: "comment-status"; file: string; id: string; status: "active" | "resolved" }
+  | { name: "comment-delete"; file: string; id: string }
+  | { name: "viewed-set"; files: string[]; viewed: boolean }
+  | { name: "file-source"; file: string; side: "old" | "new" }
+  | { name: "focus-set"; file?: string; side?: "old" | "new"; line?: number }
+  | { name: "focus-get" }
+  | { name: "focus-clear" };
+
+/**
+ * Headless review request, the surface an editor client drives Hunk through.
+ *
+ * Carries the review as a normal `CliInput` rather than its own range fields, so range
+ * selection, pathspecs, and config layering stay literally the same code the interactive
+ * commands run through.
+ */
+export interface ReviewCommandInput {
+  kind: "review";
+  input: CliInput;
+  operation: ReviewOperation;
+  /** Explicit repo root, when the command was not run inside the repo. */
+  repo?: string;
 }
 
 export interface ExtensionInstallCommandInput {
@@ -328,4 +383,5 @@ export type ParsedCliInput =
   | SessionCommandInput
   | MarkupRenderCommandInput
   | MarkupGuideCommandInput
-  | ExtensionManageCommandInput;
+  | ExtensionManageCommandInput
+  | ReviewCommandInput;

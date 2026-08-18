@@ -1,3 +1,4 @@
+import type { ChangeTypes } from "@pierre/diffs";
 import type { ExperimentalFeature } from "../core/run/experimental";
 import type { ExtensionLineHighlightTone, SessionReloadReason } from "../extension-api/types";
 import type { CommentTargetInput, DiffSide } from "../core/liveComments";
@@ -26,6 +27,10 @@ export interface SessionFileSummary {
   additions: number;
   deletions: number;
   hunkCount: number;
+  /** How the file changed; omitted by older sessions and treated as `"change"`. */
+  changeType?: ChangeTypes;
+  /** Sidecar file summary, when one exists. */
+  agentSummary?: string;
 }
 
 export interface SessionReviewHunk {
@@ -62,6 +67,7 @@ export interface HunkSessionInfo {
   title: string;
   sourceLabel: string;
   experimentalFeatures?: ExperimentalFeature[];
+  agentSummary?: string;
   files: SessionReviewFile[];
   /**
    * The generation this registration projects, and every resource it offers.
@@ -95,6 +101,8 @@ export interface HunkSessionState {
   liveComments: SessionLiveCommentSummary[];
   reviewNoteCount?: number;
   reviewNotes?: SessionReviewNoteSummary[];
+  viewedFileCount?: number;
+  viewedFilePaths?: string[];
   /**
    * Where the session's review currently sits in its producer's sequence.
    *
@@ -125,6 +133,11 @@ export interface NavigateToHunkToolInput extends SessionTargetInput {
   side?: DiffSide;
   line?: number;
   commentDirection?: "next" | "prev";
+}
+
+export interface SetViewedToolInput extends SessionTargetInput {
+  filePath: string;
+  viewed: boolean;
 }
 
 export interface ReloadSessionToolInput extends SessionTargetInput {
@@ -180,6 +193,11 @@ export interface SessionLiveCommentSummary {
 
 export interface SessionReviewNoteSummary {
   noteId: string;
+  /**
+   * Content identity, stable across changeset reshuffles that would move `noteId`.
+   * Absent from snapshots written by older peers; callers fall back to `noteId`.
+   */
+  noteKey?: string;
   source: ReviewNoteSource;
   filePath: string;
   hunkIndex?: number;
@@ -208,6 +226,13 @@ export interface AppliedCommentResult {
 
 export interface AppliedCommentBatchResult {
   applied: AppliedCommentResult[];
+}
+
+export interface SetViewedResult {
+  filePath: string;
+  viewed: boolean;
+  viewedFileCount: number;
+  totalFileCount: number;
 }
 
 export interface NavigatedSelectionResult {
@@ -314,6 +339,8 @@ export interface SelectedSessionContext {
   /** Width STML note markup renders at in the session's current layout. */
   noteMarkupWidth?: number;
   liveCommentCount: number;
+  viewedFileCount?: number;
+  viewedFilePaths?: string[];
 }
 
 export interface SessionReview {
@@ -324,12 +351,15 @@ export interface SessionReview {
   repoRoot?: string;
   inputKind: CliInput["kind"];
   experimentalFeatures?: ExperimentalFeature[];
+  agentSummary?: string;
   selectedFile: SessionReviewFile | null;
   selectedHunk: SessionReviewHunk | null;
   showAgentNotes: boolean;
   liveCommentCount: number;
   reviewNoteCount?: number;
   reviewNotes?: SessionReviewNoteSummary[];
+  viewedFileCount?: number;
+  viewedFilePaths?: string[];
   files: SessionReviewFile[];
 }
 
@@ -342,12 +372,14 @@ export type HunkSessionCommandResult =
   | ReloadedSessionResult
   | HunkReviewResultV1
   | AppliedHighlightResult
-  | ClearedHighlightsResult;
+  | ClearedHighlightsResult
+  | SetViewedResult;
 
 export type HunkSessionServerMessage =
   | SessionServerMessage<"comment", CommentToolInput>
   | SessionServerMessage<"comment_batch", CommentBatchToolInput>
   | SessionServerMessage<"navigate_to_hunk", NavigateToHunkToolInput>
+  | SessionServerMessage<"set_viewed", SetViewedToolInput>
   | SessionServerMessage<"reload_session", ReloadSessionToolInput>
   | SessionServerMessage<"remove_comment", RemoveCommentToolInput>
   | SessionServerMessage<"clear_comments", ClearCommentsToolInput>

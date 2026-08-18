@@ -1,4 +1,7 @@
-import type { ExtensionVcsWatchPlan } from "../../extension-api/types";
+import type {
+  ExtensionVcsSourceCapabilities,
+  ExtensionVcsWatchPlan,
+} from "../../extension-api/types";
 import type { DiffFile } from "../changeset/model";
 import type {
   VcsDiffCommandInput,
@@ -52,6 +55,8 @@ export interface VcsPatchResult {
   sourceLabel: string;
   title: string;
   patchText: string;
+  /** Exact source provenance for editor clients; omitted by older adapters. */
+  sourceCapabilities?: ExtensionVcsSourceCapabilities;
   /** Repo-root-relative untracked paths Hunk synthesizes into added-file diffs. */
   untrackedPaths?: string[];
   /** Exact old/new content lookups, built from the result's `readFileSource`. */
