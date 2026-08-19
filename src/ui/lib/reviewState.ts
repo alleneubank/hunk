@@ -32,6 +32,35 @@ export interface ReviewStreamState {
   visibleFiles: DiffFile[];
 }
 
+const EMPTY_REVIEW_MESSAGE = "No changes in this review.";
+const FILTER_MISS_MESSAGE = "No files match the current filter.";
+
+/**
+ * Choose empty-state copy for the review stream.
+ *
+ * An empty visible list is not a filter miss by itself. Only a non-empty query against a
+ * review that actually has files is "nothing matched."
+ */
+export function reviewStreamEmptyMessage({
+  changesetFileCount,
+  filterQuery,
+  visibleFileCount,
+}: {
+  changesetFileCount: number;
+  filterQuery: string;
+  visibleFileCount: number;
+}): string | null {
+  if (visibleFileCount > 0) {
+    return null;
+  }
+
+  if (changesetFileCount > 0 && filterQuery.trim() !== "") {
+    return FILTER_MISS_MESSAGE;
+  }
+
+  return EMPTY_REVIEW_MESSAGE;
+}
+
 export interface ReviewNavigationTarget {
   file: DiffFile;
   hunkIndex: number;

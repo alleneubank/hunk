@@ -2391,6 +2391,8 @@ export function App({
             expandedGapsByFileId={review.expandedGapsByFileId}
             fileViews={fileViewLayouts}
             files={filteredFiles}
+            changesetFileCount={bootstrap.changeset.files.length}
+            filterQuery={review.filter}
             offloadLargeDiff={bootstrap.input.options.fast === true}
             lineHighlights={paintedLineHighlights}
             pagerMode={pagerMode}

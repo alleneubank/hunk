@@ -3255,7 +3255,41 @@ describe("UI components", () => {
       10,
     );
 
+    // files={[]} with no filter facts is an empty review, not a filter miss.
+    expect(frame).toContain("No changes in this review.");
+    expect(frame).not.toContain("No files match the current filter.");
+  });
+
+  test("DiffPane renders a filter-miss message when a query hides every file", async () => {
+    const theme = resolveTheme("github-dark-default", null);
+    const frame = await captureFrame(
+      <DiffPane
+        changesetFileCount={2}
+        diffContentWidth={72}
+        files={[]}
+        filterQuery="zzz"
+        headerLabelWidth={40}
+        headerStatsWidth={16}
+        layout="split"
+        scrollRef={createRef()}
+        selectedFileId={undefined}
+        selectedHunkIndex={0}
+        separatorWidth={68}
+        showAgentNotes={false}
+        showLineNumbers={true}
+        showHunkHeaders={true}
+        wrapLines={false}
+        wrapToggleScrollTop={null}
+        theme={theme}
+        width={76}
+        onSelectFile={() => {}}
+      />,
+      80,
+      10,
+    );
+
     expect(frame).toContain("No files match the current filter.");
+    expect(frame).not.toContain("No changes in this review.");
   });
 
   test("DiffPane can hide line numbers while keeping diff signs visible", async () => {

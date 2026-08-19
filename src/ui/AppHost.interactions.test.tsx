@@ -2548,6 +2548,35 @@ describe("App interactions", () => {
     }
   });
 
+  test("empty changeset shows the empty-review copy, not a filter miss", async () => {
+    const setup = await testRender(
+      <AppHost
+        bootstrap={createTestVcsAppBootstrap({
+          changesetId: "changeset:empty-review",
+          files: [],
+        })}
+      />,
+      {
+        width: 240,
+        height: 24,
+      },
+    );
+
+    try {
+      await flush(setup);
+      const frame = setup.captureCharFrame();
+      expect(frame).toContain("0 files");
+      expect(frame).toContain("+0");
+      expect(frame).toContain("-0");
+      expect(frame).toContain("No changes in this review.");
+      expect(frame).not.toContain("No files match the current filter.");
+    } finally {
+      await act(async () => {
+        setup.renderer.destroy();
+      });
+    }
+  });
+
   test("filter focus accepts typed input and narrows the visible file set", async () => {
     const setup = await testRender(<AppHost bootstrap={createBootstrap()} />, {
       width: 240,

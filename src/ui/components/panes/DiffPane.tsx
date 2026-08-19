@@ -28,6 +28,7 @@ import type { FileSourceStatus } from "../../diff/expandCollapsedRows";
 import type { ActiveAddNoteAffordance } from "../../diff/DiffSectionBody";
 import type { CursorHighlight } from "../../diff/renderRows";
 import type { DraftReviewNote } from "../../lib/reviewNoteMapping";
+import { reviewStreamEmptyMessage } from "../../lib/reviewState";
 import {
   createVisibleAgentNote,
   reviewNoteSource,
@@ -228,6 +229,8 @@ export function DiffPane({
   expandedGapsByFileId = EMPTY_EXPANDED_GAPS_BY_FILE_ID,
   fileViews = EMPTY_FILE_VIEWS,
   files,
+  changesetFileCount = files.length,
+  filterQuery = "",
   offloadLargeDiff = false,
   lineHighlights = EMPTY_LINE_HIGHLIGHTS,
   headerLabelWidth,
@@ -290,6 +293,16 @@ export function DiffPane({
   /** Validated alternate layouts, keyed by file id; raw Pierre remains the fallback. */
   fileViews?: ReadonlyMap<string, ResolvedFileViewLayout>;
   files: DiffFile[];
+  /**
+   * Unfiltered changeset file count.
+   *
+   * `files` is the visible stream after the filter. An empty visible list is an empty
+   * review when this is 0, and a filter miss only when this is > 0 and `filterQuery` is
+   * non-empty.
+   */
+  changesetFileCount?: number;
+  /** Active file-filter query; a miss is only reported when this is non-empty. */
+  filterQuery?: string;
   /** Offload eligible syntax highlighting for this launch. */
   offloadLargeDiff?: boolean;
   /** Validated extension line marks, keyed by file id. */
@@ -2471,7 +2484,13 @@ export function DiffPane({
         </box>
       ) : (
         <box style={{ flexGrow: 1, alignItems: "center", justifyContent: "center" }}>
-          <text fg={theme.muted}>No files match the current filter.</text>
+          <text fg={theme.muted}>
+            {reviewStreamEmptyMessage({
+              changesetFileCount,
+              filterQuery,
+              visibleFileCount: files.length,
+            })}
+          </text>
         </box>
       )}
     </box>

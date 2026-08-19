@@ -5,6 +5,7 @@ import {
   buildReviewStreamState,
   buildSelectedHunkSummary,
   resolveReviewNavigationTarget,
+  reviewStreamEmptyMessage,
 } from "./reviewState";
 
 function createAnnotatedFile(id: string, path: string) {
@@ -49,6 +50,47 @@ describe("review state helpers", () => {
     // The agent's file summary is part of the haystack, not just the path.
     expect(visibleFor("gamma.ts note")).toEqual(["gamma"]);
     expect(visibleFor("nothing-matches")).toEqual([]);
+  });
+
+  // Intent: an empty visible list is not a filter miss unless the changeset has files
+  // and the query is actually non-empty. An empty review with leftover filter text is
+  // still an empty review.
+  test("reviewStreamEmptyMessage distinguishes an empty review from a filter miss", () => {
+    expect(
+      reviewStreamEmptyMessage({
+        changesetFileCount: 0,
+        filterQuery: "",
+        visibleFileCount: 0,
+      }),
+    ).toBe("No changes in this review.");
+    expect(
+      reviewStreamEmptyMessage({
+        changesetFileCount: 0,
+        filterQuery: "zzz",
+        visibleFileCount: 0,
+      }),
+    ).toBe("No changes in this review.");
+    expect(
+      reviewStreamEmptyMessage({
+        changesetFileCount: 2,
+        filterQuery: "zzz",
+        visibleFileCount: 0,
+      }),
+    ).toBe("No files match the current filter.");
+    expect(
+      reviewStreamEmptyMessage({
+        changesetFileCount: 2,
+        filterQuery: "   ",
+        visibleFileCount: 0,
+      }),
+    ).toBe("No changes in this review.");
+    expect(
+      reviewStreamEmptyMessage({
+        changesetFileCount: 2,
+        filterQuery: "zzz",
+        visibleFileCount: 1,
+      }),
+    ).toBeNull();
   });
 
   // Intent: annotated navigation plans against a file-key index the terminal derives once.
